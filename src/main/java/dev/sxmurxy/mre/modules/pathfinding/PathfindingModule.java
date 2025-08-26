@@ -46,23 +46,30 @@ public class PathfindingModule extends Module {
     private static final int MAX_STUCK_TICKS = 100;
     private static final int RECALCULATION_INTERVAL = 200; // 10 seconds
 
-    // Safety flags
-    private boolean isInitialized = false;
+    // Initialization state
+    private InitializationState initState = InitializationState.DISABLED;
     private String lastError = null;
+    private int initializationAttempts = 0;
+    private long lastInitAttempt = 0;
+    private static final int MAX_INIT_ATTEMPTS = 5;
+    private static final long INIT_RETRY_DELAY = 2000; // 2 seconds
+
+    // Pending pathfinding request (for when module isn't ready yet)
+    private BlockPos pendingTarget = null;
+
+    private enum InitializationState {
+        DISABLED,           // Module is off
+        PENDING,           // Module is on but not yet initialized
+        INITIALIZING,      // Currently attempting initialization
+        READY,             // Fully initialized and ready
+        FAILED             // Initialization failed permanently
+    }
 
     public PathfindingModule() {
         super("AdvancedPathfinding", "Advanced pathfinding with humanization and 3D navigation", ModuleCategory.MOVEMENT);
         instance = this;
-
-        // Safe initialization
-        try {
-            // Initialize basic state
-            resetPathfindingState();
-            System.out.println("[PathfindingModule] Module created successfully");
-        } catch (Exception e) {
-            System.err.println("[PathfindingModule] Error in constructor: " + e.getMessage());
-            e.printStackTrace();
-        }
+        resetPathfindingState();
+        System.out.println("[PathfindingModule] Module created successfully");
     }
 
     public static PathfindingModule getInstance() {
@@ -71,139 +78,277 @@ public class PathfindingModule extends Module {
 
     @Override
     public void onEnable() {
-        try {
-            System.out.println("[PathfindingModule] Attempting to enable...");
-
-            // Check basic requirements first
-            if (mc == null) {
-                lastError = "MinecraftClient is null";
-                System.err.println("[PathfindingModule] " + lastError);
-                this.setToggled(false);
-                return;
-            }
-
-            if (mc.world == null) {
-                lastError = "World is not loaded";
-                System.err.println("[PathfindingModule] " + lastError);
-                sendMessage("§cCannot enable pathfinding: No world loaded");
-                this.setToggled(false);
-                return;
-            }
-
-            if (mc.player == null) {
-                lastError = "Player is null";
-                System.err.println("[PathfindingModule] " + lastError);
-                sendMessage("§cCannot enable pathfinding: Player not found");
-                this.setToggled(false);
-                return;
-            }
-
-            System.out.println("[PathfindingModule] Basic checks passed, initializing systems...");
-
-            // Initialize systems with error handling
-            try {
-                pathfindingEngine = new AdvancedPathfindingEngine(mc.world);
-                System.out.println("[PathfindingModule] Pathfinding engine initialized");
-            } catch (Exception e) {
-                lastError = "Failed to initialize pathfinding engine: " + e.getMessage();
-                System.err.println("[PathfindingModule] " + lastError);
-                e.printStackTrace();
-                this.setToggled(false);
-                return;
-            }
-
-            try {
-                movementExecutor = new AdvancedMovementExecutor();
-                System.out.println("[PathfindingModule] Movement executor initialized");
-            } catch (Exception e) {
-                lastError = "Failed to initialize movement executor: " + e.getMessage();
-                System.err.println("[PathfindingModule] " + lastError);
-                e.printStackTrace();
-                this.setToggled(false);
-                return;
-            }
-
-            try {
-                movementPredictor = new MovementPredictor();
-                System.out.println("[PathfindingModule] Movement predictor initialized");
-            } catch (Exception e) {
-                lastError = "Failed to initialize movement predictor: " + e.getMessage();
-                System.err.println("[PathfindingModule] " + lastError);
-                e.printStackTrace();
-                this.setToggled(false);
-                return;
-            }
-
-            // Reset state
-            resetPathfindingState();
-            isInitialized = true;
-            lastError = null;
-
-            System.out.println("[PathfindingModule] Successfully enabled!");
-            sendMessage("§aAdvanced pathfinding enabled - Ready for navigation");
-
-        } catch (Exception e) {
-            lastError = "Unexpected error during enable: " + e.getMessage();
-            System.err.println("[PathfindingModule] " + lastError);
-            e.printStackTrace();
-
-            // Clean up and disable
-            isInitialized = false;
-            this.setToggled(false);
-
-            if (mc.player != null) {
-                sendMessage("§cFailed to enable pathfinding: " + e.getMessage());
-            }
-        }
+        System.out.println("[PathfindingModule] Module enabled - will initialize on next update");
+        initState = InitializationState.PENDING;
+        lastError = null;
+        initializationAttempts = 0;
     }
 
     @Override
     public void onDisable() {
-        try {
-            System.out.println("[PathfindingModule] Disabling...");
-            stop();
-            isInitialized = false;
-            sendMessage("§cAdvanced pathfinding disabled");
-        } catch (Exception e) {
-            System.err.println("[PathfindingModule] Error during disable: " + e.getMessage());
-            e.printStackTrace();
-        }
+        System.out.println("[PathfindingModule] Disabling module...");
+
+        // Stop any active pathfinding
+        stopPathfinding();
+
+        // Clean up systems
+        cleanupSystems();
+
+        // Reset state
+        initState = InitializationState.DISABLED;
+        lastError = null;
+        initializationAttempts = 0;
+        pendingTarget = null;
+
+        sendMessage("§cAdvanced pathfinding disabled");
     }
 
     @Override
     public void onUpdate() {
-        if (!isInitialized || !this.isToggled()) {
+        if (!this.isToggled()) {
             return;
         }
 
         try {
-            if (mc.player == null || mc.world == null) return;
-
-            // Update movement predictor safely
-            if (movementPredictor != null) {
-                movementPredictor.update(mc.player);
+            // Handle initialization states
+            switch (initState) {
+                case PENDING:
+                    attemptInitialization();
+                    break;
+                case INITIALIZING:
+                    // Wait for initialization to complete
+                    break;
+                case READY:
+                    // Normal operation
+                    handleNormalOperation();
+                    break;
+                case FAILED:
+                    // Try to reinitialize after delay
+                    handleFailedState();
+                    break;
+                case DISABLED:
+                    // Should not happen when toggled on
+                    initState = InitializationState.PENDING;
+                    break;
             }
-
-            // Handle active pathfinding
-            if (isPathing && !currentPath.isEmpty()) {
-                updatePathfinding();
-            }
-
-            // Check for completed async pathfinding
-            checkAsyncPathfinding();
 
         } catch (Exception e) {
-            System.err.println("[PathfindingModule] Error in onUpdate: " + e.getMessage());
+            System.err.println("[PathfindingModule] Critical error in onUpdate: " + e.getMessage());
             e.printStackTrace();
-
-            // Disable module on critical error
-            if (e instanceof NullPointerException || e instanceof IllegalStateException) {
-                System.err.println("[PathfindingModule] Critical error, disabling module");
-                this.setToggled(false);
-            }
+            handleCriticalError(e);
         }
     }
 
+    private void attemptInitialization() {
+        long currentTime = System.currentTimeMillis();
+
+        // Check retry delay
+        if (currentTime - lastInitAttempt < INIT_RETRY_DELAY) {
+            return;
+        }
+
+        // Check max attempts
+        if (initializationAttempts >= MAX_INIT_ATTEMPTS) {
+            initState = InitializationState.FAILED;
+            lastError = "Maximum initialization attempts exceeded";
+            sendMessage("§cPathfinding initialization failed after " + MAX_INIT_ATTEMPTS + " attempts");
+            return;
+        }
+
+        lastInitAttempt = currentTime;
+        initializationAttempts++;
+        initState = InitializationState.INITIALIZING;
+
+        System.out.println("[PathfindingModule] Initialization attempt #" + initializationAttempts);
+
+        // Perform initialization in a separate thread to avoid blocking
+        CompletableFuture.runAsync(() -> {
+            try {
+                performInitialization();
+            } catch (Exception e) {
+                handleInitializationError(e);
+            }
+        });
+    }
+
+    private void performInitialization() {
+        System.out.println("[PathfindingModule] === INITIALIZATION START ===");
+
+        try {
+            // Validate basic requirements
+            if (!validateRequirements()) {
+                return; // Error already set in validateRequirements
+            }
+
+            System.out.println("[PathfindingModule] Requirements validated, initializing systems...");
+
+            // Initialize pathfinding engine
+            System.out.println("[PathfindingModule] Initializing pathfinding engine...");
+            AdvancedPathfindingEngine tempEngine = new AdvancedPathfindingEngine(mc.world);
+
+            // Initialize movement executor
+            System.out.println("[PathfindingModule] Initializing movement executor...");
+            AdvancedMovementExecutor tempExecutor = new AdvancedMovementExecutor();
+
+            // Initialize movement predictor
+            System.out.println("[PathfindingModule] Initializing movement predictor...");
+            MovementPredictor tempPredictor = new MovementPredictor();
+
+            // If we get here, all initialization succeeded
+            // Update on main thread to avoid threading issues
+            mc.execute(() -> {
+                pathfindingEngine = tempEngine;
+                movementExecutor = tempExecutor;
+                movementPredictor = tempPredictor;
+
+                resetPathfindingState();
+                initState = InitializationState.READY;
+                lastError = null;
+
+                System.out.println("[PathfindingModule] === INITIALIZATION SUCCESS ===");
+                sendMessage("§aAdvanced pathfinding ready - All systems initialized");
+
+                // Handle pending pathfinding request
+                if (pendingTarget != null) {
+                    BlockPos target = pendingTarget;
+                    pendingTarget = null;
+                    startPathfinding(target);
+                }
+            });
+
+        } catch (Exception e) {
+            handleInitializationError(e);
+        }
+    }
+
+    private boolean validateRequirements() {
+        if (mc == null) {
+            lastError = "MinecraftClient is null";
+            System.err.println("[PathfindingModule] " + lastError);
+            mc.execute(() -> initState = InitializationState.FAILED);
+            return false;
+        }
+
+        if (mc.world == null) {
+            lastError = "World is not loaded";
+            System.err.println("[PathfindingModule] " + lastError);
+            mc.execute(() -> {
+                initState = InitializationState.PENDING; // Try again when world loads
+                sendMessage("§eWaiting for world to load...");
+            });
+            return false;
+        }
+
+        if (mc.player == null) {
+            lastError = "Player is not available";
+            System.err.println("[PathfindingModule] " + lastError);
+            mc.execute(() -> {
+                initState = InitializationState.PENDING; // Try again when player loads
+                sendMessage("§eWaiting for player to load...");
+            });
+            return false;
+        }
+
+        System.out.println("[PathfindingModule] ✓ All requirements validated");
+        return true;
+    }
+
+    private void handleInitializationError(Exception e) {
+        lastError = "Initialization failed: " + e.getMessage();
+        System.err.println("[PathfindingModule] " + lastError);
+        e.printStackTrace();
+
+        mc.execute(() -> {
+            if (initializationAttempts >= MAX_INIT_ATTEMPTS) {
+                initState = InitializationState.FAILED;
+                sendMessage("§cPathfinding initialization failed permanently: " + e.getMessage());
+            } else {
+                initState = InitializationState.PENDING; // Try again
+                sendMessage("§ePathfinding initialization failed, will retry... (" +
+                        initializationAttempts + "/" + MAX_INIT_ATTEMPTS + ")");
+            }
+        });
+    }
+
+    private void handleNormalOperation() {
+        if (mc.player == null || mc.world == null) {
+            // Lost connection to game world, need to reinitialize
+            System.out.println("[PathfindingModule] Lost game connection, reinitializing...");
+            initState = InitializationState.PENDING;
+            cleanupSystems();
+            return;
+        }
+
+        // Update movement predictor
+        if (movementPredictor != null) {
+            movementPredictor.update(mc.player);
+        }
+
+        // Handle active pathfinding
+        if (isPathing && !currentPath.isEmpty()) {
+            updatePathfinding();
+        }
+
+        // Check for completed async pathfinding
+        checkAsyncPathfinding();
+    }
+
+    private void handleFailedState() {
+        long currentTime = System.currentTimeMillis();
+
+        // Try to reinitialize after a longer delay
+        if (currentTime - lastInitAttempt > INIT_RETRY_DELAY * 3) {
+            System.out.println("[PathfindingModule] Attempting recovery from failed state...");
+            initState = InitializationState.PENDING;
+            initializationAttempts = 0; // Reset attempts for recovery
+            lastError = null;
+        }
+    }
+
+    private void handleCriticalError(Exception e) {
+        System.err.println("[PathfindingModule] Critical error occurred, attempting recovery...");
+
+        // Stop pathfinding and cleanup
+        stopPathfinding();
+        cleanupSystems();
+
+        // Reset to pending state for reinitialization
+        initState = InitializationState.PENDING;
+        lastError = "Critical error: " + e.getMessage();
+
+        sendMessage("§cPathfinding encountered an error and is reinitializing...");
+    }
+
+    private void cleanupSystems() {
+        try {
+            // Stop all movement
+            if (mc.options != null) {
+                mc.options.forwardKey.setPressed(false);
+                mc.options.backKey.setPressed(false);
+                mc.options.leftKey.setPressed(false);
+                mc.options.rightKey.setPressed(false);
+                mc.options.jumpKey.setPressed(false);
+                mc.options.sprintKey.setPressed(false);
+            }
+
+            // Cancel async tasks
+            if (currentPathfindingTask != null) {
+                currentPathfindingTask.cancel(true);
+                currentPathfindingTask = null;
+            }
+
+            // Clear systems
+            pathfindingEngine = null;
+            movementExecutor = null;
+            movementPredictor = null;
+
+            System.out.println("[PathfindingModule] Systems cleaned up");
+        } catch (Exception e) {
+            System.err.println("[PathfindingModule] Error during cleanup: " + e.getMessage());
+        }
+    }
+
+    // Rest of the pathfinding logic (unchanged)
     private void updatePathfinding() {
         try {
             ClientPlayerEntity player = mc.player;
@@ -286,7 +431,7 @@ public class PathfindingModule extends Module {
         sendMessage(String.format("§aDestination reached! §7(%.1fm in %.1fs, %.1fm/s)",
                 totalDistanceTraveled, totalTime / 1000.0, avgSpeed));
 
-        stop();
+        stopPathfinding();
     }
 
     private boolean shouldRecalculatePath() {
@@ -363,12 +508,12 @@ public class PathfindingModule extends Module {
                     sendMessage(String.format("§aPath recalculated: %d nodes", newPath.size()));
                 } else {
                     sendMessage("§cRecalculation failed - no path found");
-                    stop();
+                    stopPathfinding();
                 }
             } catch (Exception e) {
                 System.err.println("[PathfindingModule] Error in checkAsyncPathfinding: " + e.getMessage());
                 sendMessage("§cPathfinding error: " + e.getMessage());
-                stop();
+                stopPathfinding();
             } finally {
                 currentPathfindingTask = null;
             }
@@ -378,12 +523,12 @@ public class PathfindingModule extends Module {
     // Public API methods
     public static void walkTo(BlockPos targetPos) {
         PathfindingModule module = getInstance();
-        if (module == null || !module.isInitialized) {
-            System.err.println("[PathfindingModule] Module not initialized for walkTo");
+        if (module == null) {
+            System.err.println("[PathfindingModule] Module instance not available for walkTo");
             return;
         }
 
-        module.startPathfinding(targetPos);
+        module.requestPathfinding(targetPos);
     }
 
     public static void walkTo(int x, int y, int z) {
@@ -399,7 +544,7 @@ public class PathfindingModule extends Module {
 
     public static boolean isActive() {
         PathfindingModule module = getInstance();
-        return module != null && module.isPathing && module.isInitialized;
+        return module != null && module.isPathing && module.initState == InitializationState.READY;
     }
 
     public static List<PathNode> getCurrentPath() {
@@ -408,10 +553,28 @@ public class PathfindingModule extends Module {
     }
 
     // Implementation methods
+    private void requestPathfinding(BlockPos targetPos) {
+        if (initState != InitializationState.READY) {
+            // Store the request for when initialization completes
+            pendingTarget = targetPos;
+
+            if (initState == InitializationState.DISABLED) {
+                sendMessage("§ePathfinding module is disabled. Enable it first.");
+                return;
+            }
+
+            sendMessage("§ePathfinding is initializing... Your request will be processed shortly.");
+            System.out.println("[PathfindingModule] Pathfinding request queued until initialization completes");
+            return;
+        }
+
+        startPathfinding(targetPos);
+    }
+
     private void startPathfinding(BlockPos targetPos) {
         try {
-            if (!isInitialized) {
-                sendMessage("§cPathfinding module not properly initialized");
+            if (initState != InitializationState.READY) {
+                sendMessage("§cPathfinding system not ready");
                 return;
             }
 
@@ -473,6 +636,7 @@ public class PathfindingModule extends Module {
             currentPath.clear();
             pathIndex = 0;
             targetPosition = null;
+            pendingTarget = null; // Clear any pending requests
 
             // Cancel async task
             if (currentPathfindingTask != null) {
@@ -538,20 +702,38 @@ public class PathfindingModule extends Module {
     }
 
     public String getStatusMessage() {
-        if (!isInitialized) return "§cNot initialized";
-        if (lastError != null) return "§cError: " + lastError;
-        if (!isPathing) return "§7Idle";
-        if (currentPath.isEmpty()) return "§eCalculating path...";
-
-        return String.format("§aActive §7(%d/%d nodes, %.1f%% complete)",
-                pathIndex, currentPath.size(), getProgressPercentage());
+        switch (initState) {
+            case DISABLED:
+                return "§cDisabled";
+            case PENDING:
+                return "§eInitializing... (" + initializationAttempts + "/" + MAX_INIT_ATTEMPTS + ")";
+            case INITIALIZING:
+                return "§eInitializing systems...";
+            case FAILED:
+                return "§cInitialization failed: " + (lastError != null ? lastError : "Unknown error");
+            case READY:
+                if (!isPathing) return "§aReady";
+                if (currentPath.isEmpty()) return "§eCalculating path...";
+                return String.format("§aActive §7(%d/%d nodes, %.1f%% complete)",
+                        pathIndex, currentPath.size(), getProgressPercentage());
+            default:
+                return "§7Unknown state";
+        }
     }
 
     public boolean isInitialized() {
-        return isInitialized;
+        return initState == InitializationState.READY;
     }
 
     public String getLastError() {
         return lastError;
+    }
+
+    public InitializationState getInitState() {
+        return initState;
+    }
+
+    public boolean hasPendingRequest() {
+        return pendingTarget != null;
     }
 }
