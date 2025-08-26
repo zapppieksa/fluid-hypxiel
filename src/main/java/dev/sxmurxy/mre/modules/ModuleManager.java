@@ -4,7 +4,7 @@ import dev.sxmurxy.mre.UnnsenseClient;
 import dev.sxmurxy.mre.modules.movement.SShapeWheat;
 import dev.sxmurxy.mre.modules.movement.Sprint;
 import dev.sxmurxy.mre.modules.movement.uuidreveal;
-import dev.sxmurxy.mre.modules.pathfinding.PathfinderAPI;
+import dev.sxmurxy.mre.modules.pathfinding.PathfindingModule;
 import dev.sxmurxy.mre.modules.render.*;
 import dev.sxmurxy.mre.modules.settings.ISetting;
 import lombok.Getter;
@@ -54,7 +54,7 @@ public class ModuleManager {
         registerModule(new Fullbright());
         registerModule(new uuidreveal());
         registerModule(new SShapeWheat());
-        registerModule(new PathfinderAPI());
+        registerModule(new PathfindingModule());
     }
 
 }

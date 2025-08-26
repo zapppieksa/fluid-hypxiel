@@ -5,7 +5,7 @@ import dev.sxmurxy.mre.modules.Module;
 import dev.sxmurxy.mre.modules.settings.ISetting;
 
 public class BoolSetting implements ISetting<Boolean> {
-    public BoolSetting(String name, Module module, boolean value) {
+    public BoolSetting(String name, boolean value) {
         this.name = name;
         this.value = value;
         this.module = module;
@@ -17,6 +17,7 @@ public class BoolSetting implements ISetting<Boolean> {
     public Module module;
 
     public boolean value;
+    public boolean enabled;
 
     @Override
     public Boolean get() {
@@ -36,5 +37,11 @@ public class BoolSetting implements ISetting<Boolean> {
     @Override
     public Module getModule() {
         return module;
+    }
+
+    public boolean isEnabled()  { return enabled;}{
+    }
+
+    public void setEnabled(boolean show) {
     }
 }
