@@ -5,12 +5,12 @@ import dev.sxmurxy.mre.modules.Module;
 import dev.sxmurxy.mre.modules.settings.ISetting;
 
 public class NumberSetting implements ISetting<Double> {
-    public double value, min, max;
+    public double value,min,max;
     public boolean onlyint;
     public String name;
     public Module m;
 
-    public NumberSetting(String name, Module m, double value, double min, double max, boolean onlyint) {
+    public NumberSetting(String name,Module m,double value,double min,double max,boolean onlyint) {
         this.name = name;
         this.m = m;
         this.value = value;
@@ -44,8 +44,5 @@ public class NumberSetting implements ISetting<Double> {
     }
 
     public void setValue(double max) {
-    }
-
-    public Object getValue() {
     }
 }
