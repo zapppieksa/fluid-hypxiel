@@ -30,6 +30,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Base64;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -115,11 +116,10 @@ public class UnnsenseClient implements ClientModInitializer {
 
         ChatCommandListener.init();
         CommandManager.register(new BindCommand());
-        CommandManager.register(new PathfindCommand());
         CommandManager.register(new UnbindCommand());
         CommandManager.register(new ToggleCommand());
         CommandManager.register(new HelpCommand());
-        CommandManager.register(new DebugPathfindCommand());
+        CommandManager.register(new PathfindCommand());
 
         ModuleManager.register();
     }
