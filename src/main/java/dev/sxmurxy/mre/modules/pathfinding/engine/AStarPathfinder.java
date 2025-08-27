@@ -7,6 +7,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
 
 import java.util.*;
@@ -246,7 +247,7 @@ public class AStarPathfinder {
      */
     private boolean isWalkable(BlockPos pos) {
         // Bounds check
-        if (pos.getY() < world.getBottomY() || pos.getY() > world.getTopY()) {
+        if (pos.getY() < world.getBottomY() || pos.getY() > world.getTopY(Heightmap.Type.WORLD_SURFACE,0,0)) {
             return false;
         }
 

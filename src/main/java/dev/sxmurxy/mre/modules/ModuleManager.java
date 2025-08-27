@@ -55,6 +55,8 @@ public class ModuleManager {
         registerModule(new uuidreveal());
         registerModule(new SShapeWheat());
         registerModule(new PathfindingModule());
+        registerModule(new Testxray());
+        registerModule(new Test());
     }
 
 }

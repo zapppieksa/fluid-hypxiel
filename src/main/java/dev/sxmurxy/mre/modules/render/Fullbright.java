@@ -1,7 +1,7 @@
 package dev.sxmurxy.mre.modules.render;
 
-import dev.sxmurxy.mre.modules.ModuleCategory;
 import dev.sxmurxy.mre.modules.Module;
+import dev.sxmurxy.mre.modules.ModuleCategory;
 import dev.sxmurxy.mre.modules.settings.impl.EnumSetting;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.SimpleOption;

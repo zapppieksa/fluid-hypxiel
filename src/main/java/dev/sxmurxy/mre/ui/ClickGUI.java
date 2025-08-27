@@ -152,7 +152,7 @@ public class ClickGUI extends Screen {
     private float settingsScrollOffset = 0f;
     private float maxSettingsScrollOffset = 0f;
     private final Map<Module, Rectangle> toggleButtonPositions = new HashMap<>();
-    private static final Supplier<MsdfFont> NIGA_FONT = Suppliers.memoize(() -> MsdfFont.builder().atlas("atlas").data("atlas").build());
+    private static final Supplier<MsdfFont> NIGA_FONT = Suppliers.memoize(() -> MsdfFont.builder().atlas("atlas2").data("atlas2").build());
     private final Map<String, Rectangle> commandRemoveButtonPositions = new HashMap<>();
     private final Map<String, Rectangle> commandAddButtonPositions = new HashMap<>();
     private final Map<String, Rectangle> commandTextPositions = new HashMap<>();
@@ -332,14 +332,7 @@ public class ClickGUI extends Screen {
                         .build();
                 blur2223999.render(context.getMatrices().peek().getPositionMatrix(), x , y);
 
-                BuiltBorder border = Builder.border()
-                        .size(new SizeState(2, 250.3))
-                        .color(new QuadColorState(new Color(33, 34, 38, 255)))
-                        .radius(new QuadRadiusState(0f))
-                        .thickness(1f)
-                        .smoothness(1f, 1f)
-                        .build();
-                border.render(context.getMatrices().peek().getPositionMatrix(), x+100, y+0.1);
+
 
                 BuiltRectangle rectangle22334435 = Builder.rectangle()
                         .size(new SizeState(101, 250))
@@ -481,7 +474,7 @@ public class ClickGUI extends Screen {
                 // Render modules
                 if (selectedCategory != null) {
                     float moduleX = x + 110; // Starting x position for modules
-                    float moduleY = y + 40 + scrollOffset; // Starting y position with scroll offset
+                    float moduleY = y + 10 + scrollOffset; // Starting y position with scroll offset
                     float moduleWidth = 107; // Fixed width of each module
                     float moduleHeight = headerHeight; // Fixed height of each module
                     float maxX = x + rectWidth - 10; // Right boundary of the menu rectangle
@@ -513,26 +506,9 @@ public class ClickGUI extends Screen {
                         if (contextMenuModule == module) {
                             passedContextModule = true;
                         }
-                        BuiltBorder border1 = Builder.border()
-                                .size(new SizeState(350, 2))
-                                .color(new QuadColorState(new Color(33, 34, 38, 255)))
-                                .radius(new QuadRadiusState(0f))
-                                .thickness(1f)
-                                .smoothness(1f, 1f)
-                                .build();
-                        border1.render(context.getMatrices().peek().getPositionMatrix(), x+100, y+25);
 
-                        String categorynamexd = module.category.getName().equals("Movement") ? "Macros" : module.category.getName();
-// Or use a generic fallback: String categorynamexd = module.category.getName().equals("Movement") ? "Macros" : "Unknown";
 
-                        BuiltText text199900 = Builder.text()
-                                .font(NIGA_FONT.get())
-                                .text(categorynamexd)
-                                .color(new Color(255, 255, 255, 255))
-                                .size(10f)
-                                .thickness(0.01f)
-                                .build();
-                        text199900.render(context.getMatrices().peek().getPositionMatrix(), x + 130, y + 7);
+
 
                         // Set radius to 0 if this module has its context menu open, otherwise use 5f
                         float radius = (module == contextMenuModule) ? 5f : 0f;
@@ -541,6 +517,10 @@ public class ClickGUI extends Screen {
                         float radius3 = (module == contextMenuModule) ? 5f : 0f;
 
                         // Render the module
+
+
+
+
                         BuiltRectangle moduleRect1 = Builder.rectangle()
                                 .size(new SizeState(moduleWidth, moduleHeight))
                                 .color(new QuadColorState(moduleBackgroundColor))
@@ -548,6 +528,9 @@ public class ClickGUI extends Screen {
                                 .smoothness(1.0f)
                                 .build();
                         moduleRect1.render(context.getMatrices().peek().getPositionMatrix(), moduleX, moduleY);
+
+
+
 
                         BuiltRectangle moduleRect = Builder.rectangle()
                                 .size(new SizeState(moduleWidth, 20))
@@ -577,6 +560,17 @@ public class ClickGUI extends Screen {
                         if(module.getName().equals("Pathfinding")) {
                             AbstractTexture abstractTexture11134519 = MinecraftClient.getInstance().getTextureManager()
                                     .getTexture(Identifier.of("mre", "textures/icons8-xyz-100.png"));
+                            BuiltTexture texture111134519 = Builder.texture()
+                                    .size(new SizeState(25, 25))
+                                    .radius(new QuadRadiusState(0f))
+                                    .texture(0.0f, 0.0f, 1.01f, 1.01f, abstractTexture11134519)
+                                    .color(new QuadColorState(Color.WHITE))
+                                    .build();
+                            texture111134519.render(context.getMatrices().peek().getPositionMatrix(), moduleX + 42, moduleY + 7f);
+                        }
+                        if(module.getName().equals("Wheat S-Shape")) {
+                            AbstractTexture abstractTexture11134519 = MinecraftClient.getInstance().getTextureManager()
+                                    .getTexture(Identifier.of("mre", "textures/icon-wheat.png"));
                             BuiltTexture texture111134519 = Builder.texture()
                                     .size(new SizeState(25, 25))
                                     .radius(new QuadRadiusState(0f))

@@ -5,7 +5,9 @@ import dev.sxmurxy.mre.builders.Builder;
 import dev.sxmurxy.mre.builders.states.QuadColorState;
 import dev.sxmurxy.mre.builders.states.QuadRadiusState;
 import dev.sxmurxy.mre.builders.states.SizeState;
+import dev.sxmurxy.mre.modules.Module;
 import dev.sxmurxy.mre.modules.ModuleCategory;
+import dev.sxmurxy.mre.modules.ModuleManager;
 import dev.sxmurxy.mre.msdf.MsdfFont;
 import dev.sxmurxy.mre.renderers.impl.BuiltBlur;
 import dev.sxmurxy.mre.renderers.impl.BuiltRectangle;
@@ -15,12 +17,9 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
 import org.joml.Matrix4f;
-import dev.sxmurxy.mre.modules.Module;
-import dev.sxmurxy.mre.modules.ModuleManager;
 
 import java.awt.*;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.function.Supplier;
 

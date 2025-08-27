@@ -10,7 +10,7 @@ import dev.sxmurxy.mre.modules.ModuleManager;
 public class Sprint extends Module {
 
     public Sprint() {
-        super("Sprint", "Automatyczny sprint.", ModuleCategory.MOVEMENT);
+        super("Sprint", "Automatyczny sprint.", ModuleCategory.MISCELLANEOUS);
     }
 
 

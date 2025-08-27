@@ -19,7 +19,7 @@ public class uuidreveal extends Module {
     private String lastShown = "";
 
     public uuidreveal() {
-        super("uuidreveal", "Pokazuje ID skina gracza na którego patrzysz.", ModuleCategory.MOVEMENT);
+        super("uuidreveal", "Pokazuje ID skina gracza na którego patrzysz.", ModuleCategory.MISCELLANEOUS);
     }
 
     @Override

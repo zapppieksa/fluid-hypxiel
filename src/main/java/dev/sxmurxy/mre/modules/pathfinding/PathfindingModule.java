@@ -6,7 +6,6 @@ import dev.sxmurxy.mre.modules.pathfinding.config.PathfinderConfig;
 import dev.sxmurxy.mre.modules.pathfinding.engine.PathfinderEngine;
 import dev.sxmurxy.mre.modules.pathfinding.movement.MovementManager;
 import dev.sxmurxy.mre.modules.pathfinding.movement.RotationManager;
-import dev.sxmurxy.mre.modules.pathfinding.render.PathRenderer;
 import dev.sxmurxy.mre.modules.settings.impl.BoolSetting;
 import dev.sxmurxy.mre.modules.settings.impl.NumberSetting;
 import net.minecraft.client.MinecraftClient;
@@ -84,7 +83,6 @@ public class PathfindingModule extends Module {
         this.rotationManager = new RotationManager(config);
 
         // Initialize path renderer
-        PathRenderer.initialize();
     }
 
     /**
@@ -387,7 +385,7 @@ public class PathfindingModule extends Module {
      */
     private double getEffectiveReachDistance() {
         // Cast the generic Object from getValue() to a number type (Double) before performing arithmetic.
-        return (Double) reachDistance.getValue() * ((Double) movementSpeed.getValue() / 1.0);
+        return (Double) reachDistance.get() * ((Double) movementSpeed.get() / 1.0);
     }
 
     /**
