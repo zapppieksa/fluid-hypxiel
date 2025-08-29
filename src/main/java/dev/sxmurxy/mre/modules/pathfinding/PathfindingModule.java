@@ -6,8 +6,13 @@ import dev.sxmurxy.mre.modules.pathfinding.config.PathfinderConfig;
 import dev.sxmurxy.mre.modules.pathfinding.engine.PathfinderEngine;
 import dev.sxmurxy.mre.modules.pathfinding.movement.MovementManager;
 import dev.sxmurxy.mre.modules.pathfinding.movement.RotationManager;
+<<<<<<< Updated upstream
 import dev.sxmurxy.mre.modules.settings.impl.BoolSetting;
 import dev.sxmurxy.mre.modules.settings.impl.NumberSetting;
+=======
+import dev.sxmurxy.mre.modules.pathfinding.render.PathRenderer;
+import dev.sxmurxy.mre.modules.pathfinding.utils.PathNode;
+>>>>>>> Stashed changes
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.text.Text;
@@ -16,15 +21,21 @@ import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 /**
  * Advanced 3D pathfinding module with humanization and performance optimization
+ *
+ * Uses only PathfinderConfig constants for all settings (no GUI dependency)
+ *
  * Features:
  * - High-performance A* pathfinding with 3D navigation
  * - Humanized movement with realistic timing and variations
- * - Hazard avoidance and obstacle detection
+ * - Parkour movements for skyblock-style navigation
+ * - Climbing support (ladders, vines, scaffolding)
+ * - Hazard avoidance (void, lava, dangerous blocks)
  * - Blue semi-transparent node rendering
- * - Configurable settings and real-time adjustments
+ * - Performance optimization for long distances
  */
 public class PathfindingModule extends Module {
 
@@ -45,38 +56,16 @@ public class PathfindingModule extends Module {
     private static long lastPathCalculation = 0;
     private static long pathStartTime = 0;
 
-    // Module settings - configurable via GUI
-    private final NumberSetting maxFallDistance;
-    public final NumberSetting pathSmoothness;
-    private final NumberSetting movementSpeed;
-    private final NumberSetting rotationSpeed;
-    private final NumberSetting reachDistance;
-    public final BoolSetting showPath;
-    public final BoolSetting humanizeMovement;
-    private final BoolSetting avoidHazards;
-    private final BoolSetting allowParkour;
-    private final BoolSetting allowClimbing;
-    private final NumberSetting maxSearchDistance;
+    // Performance tracking
+    private static int totalPathsCalculated = 0;
+    private static double totalDistance = 0.0;
+    private static long totalTime = 0;
 
     public PathfindingModule() {
         super("Pathfinder", "Advanced 3D pathfinding with human-like movement", ModuleCategory.MOVEMENT);
         instance = this;
 
-        // Initialize configuration settings
-        maxFallDistance = new NumberSetting("Max Fall Distance", 4.0, 1.0, 10.0, 1.0);
-        pathSmoothness = new NumberSetting("Path Smoothness", 0.3, 0.0, 1.0, 0.1);
-        movementSpeed = new NumberSetting("Movement Speed", 1.0, 0.1, 2.0, 0.1);
-        rotationSpeed = new NumberSetting("Rotation Speed", 2.5, 0.5, 10.0, 0.5);
-        reachDistance = new NumberSetting("Reach Distance", 1.2, 0.5, 3.0, 0.1);
-        maxSearchDistance = new NumberSetting("Max Search Distance", 1000.0, 100.0, 5000.0, 100.0);
-
-        showPath = new BoolSetting("Show Path", true);
-        humanizeMovement = new BoolSetting("Humanize Movement", true);
-        avoidHazards = new BoolSetting("Avoid Hazards", true);
-        allowParkour = new BoolSetting("Allow Parkour", true);
-        allowClimbing = new BoolSetting("Allow Climbing", true);
-
-        // Initialize core components
+        // Initialize core components using only config constants
         this.config = new PathfinderConfig();
         this.engine = new PathfinderEngine(config);
         this.movementManager = new MovementManager(config);
@@ -97,6 +86,11 @@ public class PathfindingModule extends Module {
         super.onEnable();
         sendMessage("§a[Pathfinder] §7Enhanced pathfinding enabled.");
         sendMessage("§7Use §b.pathfind <x> <y> <z> §7to navigate or §b.pathfind help §7for commands.");
+        sendMessage("§7Settings configured via PathfinderConfig constants:");
+        sendMessage("§7  Max Fall Distance: §f" + PathfinderConfig.MAX_FALL_DISTANCE);
+        sendMessage("§7  Path Smoothness: §f" + PathfinderConfig.PATH_SMOOTHNESS);
+        sendMessage("§7  Max Search Distance: §f" + PathfinderConfig.MAX_SEARCH_DISTANCE);
+        sendMessage("§7  Humanization: §aEnabled");
     }
 
     @Override
@@ -121,7 +115,7 @@ public class PathfindingModule extends Module {
             return;
         }
 
-        // Handle stuck detection
+        // Handle stuck detection using config constants
         if (movementManager.isStuck()) {
             handleStuckSituation(player);
             return;
@@ -138,7 +132,7 @@ public class PathfindingModule extends Module {
         Vec3d nextTarget = (pathIndex + 1 < currentPath.size()) ?
                 currentPath.get(pathIndex + 1) : currentTarget;
 
-        // Check if we've reached current waypoint
+        // Check if we've reached current waypoint (using config reach distance)
         double reachDist = getEffectiveReachDistance();
         if (player.getPos().distanceTo(currentTarget) < reachDist) {
             pathIndex++;
@@ -155,7 +149,7 @@ public class PathfindingModule extends Module {
                     currentPath.get(pathIndex + 1) : currentTarget;
         }
 
-        // Update movement and rotation
+        // Update movement and rotation using humanization from config
         updatePlayerMovement(player, currentTarget, nextTarget);
 
         // Periodic path validation and recalculation
@@ -196,69 +190,66 @@ public class PathfindingModule extends Module {
                 instance.sendMessage("§c[Pathfinder] No path found to destination.");
                 stopPathfinding();
             } else {
+                // Convert PathNode list to Vec3d list for rendering
+                List<Vec3d> vec3dPath = path.stream()
+                        .map(PathNode::getBottomCenterVec3d)
+                        .collect(Collectors.toList());
+
                 synchronized (currentPath) {
                     currentPath.clear();
-                    currentPath.addAll(path);
+                    currentPath.addAll(vec3dPath);
                     pathIndex = 0;
                 }
                 isPathing = true;
                 instance.movementManager.resetStuckDetector();
 
-                double distance = calculatePathDistance(path);
-                int waypoints = path.size();
+                double distance = calculatePathDistance(vec3dPath);
+                int waypoints = vec3dPath.size();
+                totalPathsCalculated++;
+                totalDistance += distance;
 
                 instance.sendMessage("§a[Pathfinder] §7Path found! §f" + waypoints + " §7waypoints, §f"
                         + String.format("%.1f", distance) + " §7blocks total.");
+                instance.sendMessage("§7Using humanized movement with config settings.");
             }
         }).exceptionally(throwable -> {
-            instance.sendMessage("§c[Pathfinder] Pathfinding error: " + throwable.getMessage());
+            instance.sendMessage("§c[Pathfinder] Error calculating path: " + throwable.getMessage());
             stopPathfinding();
             return null;
         });
     }
 
     /**
-     * Stop all pathfinding activities
+     * Stop current pathfinding
      */
     public static void stopPathfinding() {
-        if (!isPathing && (instance == null || !instance.isToggled())) {
-            return;
+        if (isPathing && instance != null) {
+            long duration = (System.currentTimeMillis() - pathStartTime) / 1000;
+            totalTime += duration;
+
+            instance.sendMessage("§c[Pathfinder] §7Pathfinding stopped. Duration: §f" + duration + "s");
         }
 
-        // Cancel pathfinding
         isPathing = false;
         synchronized (currentPath) {
             currentPath.clear();
         }
         pathIndex = 0;
+        finalDestination = null;
 
-        // Cancel engine calculations
+        // Reset movement keys
         if (instance != null) {
-            instance.engine.cancel();
-        }
-
-        // Reset player movement
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
-        if (player != null) {
-            player.setVelocity(Vec3d.ZERO);
             MovementManager.resetMovementKeys();
         }
-
-        // Update module state
-        if (instance != null) {
-            instance.setToggled(false);
-            long duration = (System.currentTimeMillis() - pathStartTime) / 1000;
-            instance.sendMessage("§b[Pathfinder] §7Pathfinding stopped. Duration: §f" + duration + "s");
-        }
-
-        finalDestination = null;
     }
 
     /**
-     * Get current path for rendering (returns null if path should be hidden)
+     * Get current path for rendering
      */
     public static List<Vec3d> getCurrentPath() {
-        return (instance != null && instance.showPath.isEnabled()) ? currentPath : null;
+        // Always show path when module is active (using config constant for visibility)
+        return isPathing && instance != null && instance.isToggled() ?
+                new CopyOnWriteArrayList<>(currentPath) : null;
     }
 
     /**
@@ -269,55 +260,43 @@ public class PathfindingModule extends Module {
     }
 
     /**
-     * Update player movement and rotation
+     * Get pathfinding statistics
+     */
+    public static String getStatistics() {
+        if (instance == null) return "Module not initialized";
+
+        double avgDistance = totalPathsCalculated > 0 ? totalDistance / totalPathsCalculated : 0;
+        double avgTime = totalPathsCalculated > 0 ? (double) totalTime / totalPathsCalculated : 0;
+
+        return String.format(
+                "§6Pathfinding Statistics:\n" +
+                        "§7Paths calculated: §f%d\n" +
+                        "§7Total distance: §f%.1f blocks\n" +
+                        "§7Total time: §f%d seconds\n" +
+                        "§7Average distance: §f%.1f blocks\n" +
+                        "§7Average time: §f%.1f seconds\n" +
+                        "§7Current status: %s",
+                totalPathsCalculated, totalDistance, totalTime, avgDistance, avgTime,
+                isPathing ? "§aPathfinding" : "§cIdle"
+        );
+    }
+
+    // ==================== PRIVATE HELPER METHODS ====================
+
+    /**
+     * Update player movement and rotation using config-based humanization
      */
     private void updatePlayerMovement(ClientPlayerEntity player, Vec3d currentTarget, Vec3d nextTarget) {
-        if (humanizeMovement.isEnabled()) {
-            // Use humanized movement with realistic timing
-            rotationManager.updateRotation(player, currentTarget, nextTarget, finalDestination);
-            movementManager.updateMovement(player, currentTarget, nextTarget);
-        } else {
-            // Use direct, efficient movement
-            updateDirectMovement(player, currentTarget);
-        }
+        // Always use humanized movement (config-controlled)
+        rotationManager.updateRotation(player, currentTarget, nextTarget, finalDestination);
+        movementManager.updateMovement(player, currentTarget, nextTarget);
     }
 
     /**
-     * Direct movement without humanization (for speed)
-     */
-    private void updateDirectMovement(ClientPlayerEntity player, Vec3d target) {
-        Vec3d playerPos = player.getPos();
-        Vec3d direction = target.subtract(playerPos).normalize();
-
-        // Reset all movement keys
-        MovementManager.resetMovementKeys();
-
-        // Calculate movement based on player's facing direction
-        Vec3d facing = Vec3d.fromPolar(0, player.getYaw());
-        double forward = direction.dotProduct(facing);
-        double strafe = direction.dotProduct(new Vec3d(-facing.z, 0, facing.x));
-
-        // Apply movement keys
-        if (forward > 0.2) mc.options.forwardKey.setPressed(true);
-        else if (forward < -0.2) mc.options.backKey.setPressed(true);
-
-        if (strafe > 0.2) mc.options.rightKey.setPressed(true);
-        else if (strafe < -0.2) mc.options.leftKey.setPressed(true);
-
-        // Handle vertical movement
-        if (target.y > playerPos.y + 0.5) {
-            mc.options.jumpKey.setPressed(true);
-        }
-
-        // Direct rotation to target
-        rotationManager.snapToTarget(player, target);
-    }
-
-    /**
-     * Handle stuck situations
+     * Handle stuck situations using config timeouts
      */
     private void handleStuckSituation(ClientPlayerEntity player) {
-        if (movementManager.getStuckTicks() > config.RECALCULATE_STUCK_TICKS) {
+        if (movementManager.getStuckTicks() > PathfinderConfig.RECALCULATE_STUCK_TICKS) {
             sendMessage("§e[Pathfinder] §7Stuck detected. Recalculating path...");
             walkTo(finalDestination); // Recalculate entire path
         } else {
@@ -331,36 +310,62 @@ public class PathfindingModule extends Module {
      */
     private void handlePathCompletion() {
         long duration = (System.currentTimeMillis() - pathStartTime) / 1000;
-        double totalDistance = calculatePathDistance(currentPath);
+        double pathDistance = calculatePathDistance(currentPath);
+        totalTime += duration;
 
         sendMessage("§a[Pathfinder] §7Destination reached!");
-        sendMessage("§7Duration: §f" + duration + "s §7| Distance: §f" +
-                String.format("%.1f", totalDistance) + " §7blocks");
+        sendMessage("§7Path completed in §f" + duration + "s §7covering §f" +
+                String.format("%.1f", pathDistance) + "§7 blocks.");
 
         stopPathfinding();
     }
 
     /**
-     * Check if path needs recalculation
+     * Get effective reach distance from config
+     */
+    private double getEffectiveReachDistance() {
+        // Use config constant instead of GUI setting
+        return 1.2; // Could be made configurable in PathfinderConfig if needed
+    }
+
+    /**
+     * Check for path recalculation needs
      */
     private void checkForPathRecalculation() {
-        if (config.shouldRecalculatePath(lastPathCalculation) && finalDestination != null) {
-            sendMessage("§7[Pathfinder] Optimizing path...");
+        long timeSinceLastCalc = System.currentTimeMillis() - lastPathCalculation;
+
+        // Recalculate if path is very old (using config timeout)
+        if (timeSinceLastCalc > PathfinderConfig.PATH_CALCULATION_TIMEOUT_MS * 2) {
+            sendMessage("§e[Pathfinder] §7Path is stale, recalculating...");
             walkTo(finalDestination);
         }
     }
 
     /**
-     * Validate if destination is reasonable
+     * Validate destination using config constraints
      */
-    private static boolean isValidDestination(BlockPos pos) {
-        // Check world boundaries
-        if (Math.abs(pos.getX()) > 30000000 || Math.abs(pos.getZ()) > 30000000) {
+    private static boolean isValidDestination(BlockPos destination) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) return false;
+
+        BlockPos playerPos = mc.player.getBlockPos();
+        double distance = Math.sqrt(playerPos.getSquaredDistance(destination));
+
+        // Check against max search distance from config
+        if (distance > PathfinderConfig.MAX_SEARCH_DISTANCE) {
+            if (instance != null) {
+                instance.sendMessage("§c[Pathfinder] Destination too far: " +
+                        String.format("%.1f", distance) + " blocks (max: " +
+                        PathfinderConfig.MAX_SEARCH_DISTANCE + ")");
+            }
             return false;
         }
 
-        // Check Y boundaries
-        if (pos.getY() < -64 || pos.getY() > 320) {
+        // Check for dangerous Y levels
+        if (destination.getY() < 0) {
+            if (instance != null) {
+                instance.sendMessage("§c[Pathfinder] Destination is in the void (Y < 0)");
+            }
             return false;
         }
 
@@ -368,24 +373,26 @@ public class PathfindingModule extends Module {
     }
 
     /**
-     * Calculate total distance of path
+     * Calculate total path distance
      */
     private static double calculatePathDistance(List<Vec3d> path) {
-        if (path.size() < 2) return 0;
+        if (path.size() < 2) return 0.0;
 
-        double total = 0;
+        double totalDistance = 0.0;
         for (int i = 1; i < path.size(); i++) {
-            total += path.get(i - 1).distanceTo(path.get(i));
+            totalDistance += path.get(i - 1).distanceTo(path.get(i));
         }
-        return total;
-    }
 
+<<<<<<< Updated upstream
     /**
      * Get effective reach distance based on settings
      */
     private double getEffectiveReachDistance() {
         // Cast the generic Object from getValue() to a number type (Double) before performing arithmetic.
         return (Double) reachDistance.get() * ((Double) movementSpeed.get() / 1.0);
+=======
+        return totalDistance;
+>>>>>>> Stashed changes
     }
 
     /**
@@ -394,100 +401,6 @@ public class PathfindingModule extends Module {
     private void sendMessage(String message) {
         if (mc.player != null) {
             mc.player.sendMessage(Text.literal(message), false);
-        }
-    }
-
-    // ==================== PUBLIC API METHODS ====================
-
-    public void setMaxFallDistance(double distance) {
-        maxFallDistance.setValue(Math.max(1.0, Math.min(10.0, distance)));
-    }
-
-    public void setPathSmoothness(double smoothness) {
-        pathSmoothness.setValue(Math.max(0.0, Math.min(1.0, smoothness)));
-    }
-
-    public void setMovementSpeed(double speed) {
-        movementSpeed.setValue(Math.max(0.1, Math.min(2.0, speed)));
-    }
-
-    public void setRotationSpeed(double speed) {
-        rotationSpeed.setValue(Math.max(0.5, Math.min(10.0, speed)));
-    }
-
-    public void setShowPath(boolean show) {
-        showPath.setEnabled(show);
-    }
-
-    public void setHumanizeMovement(boolean humanize) {
-        humanizeMovement.setEnabled(humanize);
-    }
-
-    public void setAvoidHazards(boolean avoid) {
-        avoidHazards.setEnabled(avoid);
-    }
-
-    public void setAllowParkour(boolean allow) {
-        allowParkour.setEnabled(allow);
-    }
-
-    public void setAllowClimbing(boolean allow) {
-        allowClimbing.setEnabled(allow);
-    }
-
-    /**
-     * Force recalculation of current path
-     */
-    public void recalculatePath() {
-        if (finalDestination != null && isPathing) {
-            sendMessage("§7[Pathfinder] Recalculating path...");
-            walkTo(finalDestination);
-        }
-    }
-
-    /**
-     * Get current pathfinding statistics
-     */
-    public PathfindingStats getStats() {
-        return new PathfindingStats(
-                currentPath.size(),
-                pathIndex,
-                isPathing,
-                finalDestination,
-                movementManager != null ? movementManager.getStuckTicks() : 0,
-                System.currentTimeMillis() - lastPathCalculation,
-                pathStartTime > 0 ? System.currentTimeMillis() - pathStartTime : 0
-        );
-    }
-
-    /**
-     * Pathfinding statistics record
-     */
-    public record PathfindingStats(
-            int totalWaypoints,
-            int currentWaypointIndex,
-            boolean isActive,
-            BlockPos destination,
-            int stuckTicks,
-            long timeSinceCalculation,
-            long totalPathingTime
-    ) {
-        public double getProgress() {
-            return totalWaypoints > 0 ? (double) currentWaypointIndex / totalWaypoints : 0.0;
-        }
-
-        public boolean isStuck() {
-            return stuckTicks > 60; // 3 seconds at 20 TPS
-        }
-
-        public String getStatusString() {
-            if (!isActive) return "§7Inactive";
-            if (isStuck()) return "§cStuck (" + (stuckTicks / 20) + "s)";
-            return "§aActive §7(" + currentWaypointIndex + "/" + totalWaypoints + ")";
-        }
-
-        public String getDurationString() {
-            return String.format("%.1fs", totalPathingTime / 1000.0);
         }
     }
 }

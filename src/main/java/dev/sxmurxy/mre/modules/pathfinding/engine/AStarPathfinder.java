@@ -2,6 +2,7 @@ package dev.sxmurxy.mre.modules.pathfinding.engine;
 
 import dev.sxmurxy.mre.modules.pathfinding.config.PathfinderConfig;
 import dev.sxmurxy.mre.modules.pathfinding.utils.PathNode;
+import dev.sxmurxy.mre.modules.pathfinding.movement.MovementType;
 import net.minecraft.block.*;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.effect.StatusEffects;
@@ -18,12 +19,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * Advanced A* pathfinding algorithm with 3D navigation capabilities
  *
  * Features:
- * - 3D movement with jumping, climbing, falling
- * - Parkour movements for gap crossing
- * - Hazard avoidance (void, lava, damage blocks)
- * - Performance optimizations for long-distance pathfinding
- * - Node caching and memory management
- * - Cancellation support for responsive UI
+ * - High-performance 3D pathfinding optimized for thousands of blocks
+ * - Parkour movements for skyblock-style navigation
+ * - Climbing support (ladders, vines, scaffolding)
+ * - Hazard avoidance (void, lava, dangerous blocks)
+ * - Cached segments for performance
+ * - Heuristic-based A* with optimizations
  */
 public class AStarPathfinder {
 
@@ -37,12 +38,12 @@ public class AStarPathfinder {
     private final PriorityQueue<PathNode> openSet = new PriorityQueue<>(Comparator.comparing(PathNode::getFCost));
 
     // Performance tracking
-    private static final int MAX_ITERATIONS = 15000;
-    private static final int CACHE_CLEANUP_INTERVAL = 2000;
+    private static final int MAX_ITERATIONS = 25000; // Increased for long distance
+    private static final int CACHE_CLEANUP_INTERVAL = 3000;
     private int iterations = 0;
     private long startTime = 0;
 
-    // Movement directions for pathfinding
+    // Movement directions for comprehensive pathfinding
     private static final int[][] CARDINAL_DIRECTIONS = {
             {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}
     };
@@ -52,8 +53,18 @@ public class AStarPathfinder {
     };
 
     private static final int[][] JUMP_DIRECTIONS = {
+            // 1-block jumps (standard parkour)
             {1, 1, 0}, {-1, 1, 0}, {0, 1, 1}, {0, 1, -1},
-            {1, 1, 1}, {-1, 1, 1}, {1, 1, -1}, {-1, 1, -1}
+            {1, 1, 1}, {-1, 1, 1}, {1, 1, -1}, {-1, 1, -1},
+            // 2-block jumps (advanced parkour)
+            {2, 1, 0}, {-2, 1, 0}, {0, 1, 2}, {0, 1, -2},
+            {2, 1, 1}, {-2, 1, 1}, {1, 1, 2}, {-1, 1, 2}
+    };
+
+    // Climbing directions
+    private static final int[][] CLIMB_DIRECTIONS = {
+            {0, 1, 0}, {0, 2, 0}, {0, 3, 0}, // Vertical climbing
+            {1, 1, 0}, {-1, 1, 0}, {0, 1, 1}, {0, 1, -1} // Diagonal climbing
     };
 
     public AStarPathfinder(World world, PathfinderConfig config, AtomicBoolean cancellationToken) {
@@ -63,7 +74,7 @@ public class AStarPathfinder {
     }
 
     /**
-     * Find path from start to goal using A* algorithm with 3D movement
+     * Find path from start to goal using optimized A* algorithm
      */
     public List<PathNode> findPath(BlockPos start, BlockPos goal) {
         if (world == null || start.equals(goal)) {
@@ -76,6 +87,7 @@ public class AStarPathfinder {
         PathNode startNode = new PathNode(start);
         startNode.setGCost(0);
         startNode.setHCost(calculateHeuristic(start, goal));
+        startNode.setMovementType(MovementType.WALK);
 
         openSet.add(startNode);
         nodeCache.put(start, startNode);
@@ -98,7 +110,7 @@ public class AStarPathfinder {
                 break;
             }
 
-            // Explore neighbors
+            // Explore neighbors with comprehensive movement options
             List<PathNode> neighbors = generateNeighbors(current, goal);
             for (PathNode neighbor : neighbors) {
                 if (closedSet.contains(neighbor.getPos()) || cancellationToken.get()) {
@@ -109,33 +121,31 @@ public class AStarPathfinder {
 
                 PathNode existingNode = nodeCache.get(neighbor.getPos());
                 if (existingNode == null) {
-                    // New node
+                    // New node discovered
                     neighbor.setGCost(tentativeG);
                     neighbor.setHCost(calculateHeuristic(neighbor.getPos(), goal));
                     neighbor.setParent(current);
-                    neighbor.setMovementType(determineMovementType(current.getPos(), neighbor.getPos()));
 
                     openSet.add(neighbor);
                     nodeCache.put(neighbor.getPos(), neighbor);
                 } else if (tentativeG < existingNode.getGCost()) {
-                    // Better path found
+                    // Better path found to existing node
                     openSet.remove(existingNode);
                     existingNode.setGCost(tentativeG);
                     existingNode.setParent(current);
-                    existingNode.setMovementType(determineMovementType(current.getPos(), neighbor.getPos()));
                     openSet.add(existingNode);
                 }
             }
 
             iterations++;
 
-            // Periodic maintenance
+            // Periodic maintenance for long-distance pathfinding
             if (iterations % CACHE_CLEANUP_INTERVAL == 0) {
                 performMaintenance();
             }
 
             // Time limit check
-            if (System.currentTimeMillis() - startTime > config.PATH_CALCULATION_TIMEOUT_MS) {
+            if (System.currentTimeMillis() - startTime > PathfinderConfig.PATH_CALCULATION_TIMEOUT_MS) {
                 System.out.println("Pathfinding timeout after " + iterations + " iterations");
                 break;
             }
@@ -145,7 +155,8 @@ public class AStarPathfinder {
         if (goalNode != null) {
             List<PathNode> path = reconstructPath(goalNode);
             System.out.println("Path found in " + iterations + " iterations, " +
-                    (System.currentTimeMillis() - startTime) + "ms");
+                    (System.currentTimeMillis() - startTime) + "ms, distance: " +
+                    String.format("%.1f", calculatePathLength(path)));
             return path;
         }
 
@@ -154,43 +165,50 @@ public class AStarPathfinder {
     }
 
     /**
-     * Generate valid neighbor nodes for current position
+     * Generate comprehensive neighbor nodes with all movement types
      */
     private List<PathNode> generateNeighbors(PathNode current, BlockPos goal) {
         List<PathNode> neighbors = new ArrayList<>();
         BlockPos pos = current.getPos();
 
-        // Standard ground movement
+        // 1. Standard ground movement (walking)
         addGroundMovement(neighbors, pos);
 
-        // Vertical movements
+        // 2. Vertical movements (climbing, jumping, falling)
         addVerticalMovement(neighbors, pos, goal);
 
-        // Parkour movements (if enabled and close to goal)
+        // 3. Parkour movements (for skyblock islands)
         if (shouldAttemptParkour(pos, goal)) {
             addParkourMovement(neighbors, pos, goal);
         }
+
+        // 4. Special movement optimizations
+        addOptimizedMovements(neighbors, pos, goal);
 
         return neighbors;
     }
 
     /**
-     * Add ground-level movement options
+     * Add standard ground-level movement options
      */
     private void addGroundMovement(List<PathNode> neighbors, BlockPos pos) {
         // Cardinal directions
         for (int[] dir : CARDINAL_DIRECTIONS) {
             BlockPos newPos = pos.add(dir[0], dir[1], dir[2]);
             if (isWalkable(newPos)) {
-                neighbors.add(new PathNode(newPos));
+                PathNode node = new PathNode(newPos);
+                node.setMovementType(MovementType.WALK);
+                neighbors.add(node);
             }
         }
 
-        // Diagonal movement
+        // Diagonal movement (if not blocked)
         for (int[] dir : DIAGONAL_DIRECTIONS) {
             BlockPos newPos = pos.add(dir[0], dir[1], dir[2]);
             if (isWalkable(newPos) && isDiagonalClear(pos, newPos)) {
-                neighbors.add(new PathNode(newPos));
+                PathNode node = new PathNode(newPos);
+                node.setMovementType(MovementType.DIAGONAL);
+                neighbors.add(node);
             }
         }
     }
@@ -199,254 +217,335 @@ public class AStarPathfinder {
      * Add vertical movement options (climbing, jumping, falling)
      */
     private void addVerticalMovement(List<PathNode> neighbors, BlockPos pos, BlockPos goal) {
-        // Climbing up
-        if (canClimbUp(pos)) {
-            neighbors.add(new PathNode(pos.up()));
-            // Multi-level climbing for efficiency
-            if (canClimbUp(pos.up())) {
-                neighbors.add(new PathNode(pos.up(2)));
+        // Climbing movements
+        for (int[] dir : CLIMB_DIRECTIONS) {
+            BlockPos climbPos = pos.add(dir[0], dir[1], dir[2]);
+            if (canClimbTo(pos, climbPos)) {
+                PathNode node = new PathNode(climbPos);
+                node.setMovementType(MovementType.CLIMB);
+                neighbors.add(node);
             }
         }
 
-        // Jumping
+        // Jumping movements
         for (int[] dir : JUMP_DIRECTIONS) {
             BlockPos jumpPos = pos.add(dir[0], dir[1], dir[2]);
             if (canJumpTo(pos, jumpPos)) {
-                neighbors.add(new PathNode(jumpPos));
+                PathNode node = new PathNode(jumpPos);
+                node.setMovementType(MovementType.JUMP);
+                neighbors.add(node);
             }
         }
 
-        // Falling
+        // Falling with safety checks
         BlockPos fallPos = findSafeFallPosition(pos);
         if (fallPos != null && !fallPos.equals(pos)) {
-            neighbors.add(new PathNode(fallPos));
+            PathNode node = new PathNode(fallPos);
+            node.setMovementType(MovementType.FALL);
+            neighbors.add(node);
         }
     }
 
     /**
-     * Add parkour movement options for gap crossing
+     * Add parkour movement options for skyblock-style navigation
      */
     private void addParkourMovement(List<PathNode> neighbors, BlockPos pos, BlockPos goal) {
-        int[][] parkourMoves = {
-                {2, 0, 0}, {-2, 0, 0}, {0, 0, 2}, {0, 0, -2},  // 2-block jumps
-                {3, 0, 0}, {-3, 0, 0}, {0, 0, 3}, {0, 0, -3},  // 3-block jumps
-                {2, 1, 0}, {-2, 1, 0}, {0, 1, 2}, {0, 1, -2},  // Up-jumps
-                {4, -1, 0}, {-4, -1, 0}, {0, -1, 4}, {0, -1, -4} // Down-jumps
+        // Extended jumps for skyblock islands
+        int[][] extendedJumps = {
+                {3, 0, 0}, {-3, 0, 0}, {0, 0, 3}, {0, 0, -3},
+                {4, 0, 0}, {-4, 0, 0}, {0, 0, 4}, {0, 0, -4},
+                {3, 1, 0}, {-3, 1, 0}, {0, 1, 3}, {0, 1, -3},
+                {4, 1, 0}, {-4, 1, 0}, {0, 1, 4}, {0, 1, -4}
         };
 
-        for (int[] move : parkourMoves) {
-            BlockPos parkourPos = pos.add(move[0], move[1], move[2]);
-            if (canParkourTo(pos, parkourPos)) {
-                neighbors.add(new PathNode(parkourPos));
+        for (int[] jump : extendedJumps) {
+            BlockPos jumpPos = pos.add(jump[0], jump[1], jump[2]);
+            if (canParkourTo(pos, jumpPos)) {
+                PathNode node = new PathNode(jumpPos);
+                node.setMovementType(MovementType.PARKOUR);
+                node.setSpecialMove(true);
+                neighbors.add(node);
             }
         }
     }
+
+    /**
+     * Add optimized movements for long-distance pathfinding
+     */
+    private void addOptimizedMovements(List<PathNode> neighbors, BlockPos pos, BlockPos goal) {
+        double distanceToGoal = Math.sqrt(pos.getSquaredDistance(goal));
+
+        // Long-distance optimization: larger steps when far from goal
+        if (distanceToGoal > 50) {
+            int[][] longSteps = {
+                    {2, 0, 0}, {-2, 0, 0}, {0, 0, 2}, {0, 0, -2},
+                    {2, 0, 1}, {-2, 0, 1}, {1, 0, 2}, {-1, 0, 2}
+            };
+
+            for (int[] step : longSteps) {
+                BlockPos stepPos = pos.add(step[0], step[1], step[2]);
+                if (isWalkable(stepPos) && isPathClear(pos, stepPos)) {
+                    PathNode node = new PathNode(stepPos);
+                    node.setMovementType(MovementType.WALK);
+                    neighbors.add(node);
+                }
+            }
+        }
+    }
+
+    // ==================== MOVEMENT VALIDATION METHODS ====================
 
     /**
      * Check if position is walkable
      */
     private boolean isWalkable(BlockPos pos) {
+<<<<<<< Updated upstream
         // Bounds check
         if (pos.getY() < world.getBottomY() || pos.getY() > world.getTopY(Heightmap.Type.WORLD_SURFACE,0,0)) {
             return false;
         }
+=======
+        if (isDangerous(pos)) return false;
+>>>>>>> Stashed changes
 
-        // Must have solid ground
         BlockState ground = world.getBlockState(pos.down());
-        if (!isSolid(ground) && !isClimbable(pos.down())) {
+        BlockState atPos = world.getBlockState(pos);
+        BlockState above = world.getBlockState(pos.up());
+
+        // Must have solid ground beneath
+        if (!isSolid(ground) && !isClimbable(ground)) {
             return false;
         }
 
-        // Must have clear space for player (2 blocks high)
-        if (!isClear(pos) || !isClear(pos.up())) {
-            return false;
+        // Must have air or passable blocks at head level
+        return isPassable(atPos) && isPassable(above);
+    }
+
+    /**
+     * Check if diagonal movement is clear
+     */
+    private boolean isDiagonalClear(BlockPos from, BlockPos to) {
+        BlockPos corner1 = new BlockPos(from.getX(), from.getY(), to.getZ());
+        BlockPos corner2 = new BlockPos(to.getX(), from.getY(), from.getZ());
+        return isPassable(world.getBlockState(corner1)) && isPassable(world.getBlockState(corner2));
+    }
+
+    /**
+     * Check if can climb to target position
+     */
+    private boolean canClimbTo(BlockPos from, BlockPos to) {
+        if (isDangerous(to)) return false;
+
+        // Check for climbable blocks (ladders, vines, scaffolding)
+        BlockState fromState = world.getBlockState(from);
+        BlockState toState = world.getBlockState(to);
+
+        if (isClimbable(fromState) || isClimbable(toState)) {
+            return isPassable(world.getBlockState(to)) && isPassable(world.getBlockState(to.up()));
         }
 
-        // Avoid dangerous positions
-        return !isDangerous(pos);
+        // Check for blocks we can climb on
+        BlockState supportState = world.getBlockState(to.down());
+        return isSolid(supportState) && isPassable(world.getBlockState(to)) && isPassable(world.getBlockState(to.up()));
     }
 
     /**
      * Check if can jump to target position
      */
     private boolean canJumpTo(BlockPos from, BlockPos to) {
-        // Check horizontal distance (max 4 blocks for sprint-jump)
-        double horizontalDist = Math.sqrt(Math.pow(to.getX() - from.getX(), 2) +
-                Math.pow(to.getZ() - from.getZ(), 2));
-        if (horizontalDist > 4.2) return false;
+        if (isDangerous(to)) return false;
 
-        // Check vertical distance (max 1.25 blocks jump height)
-        int verticalDist = to.getY() - from.getY();
-        if (verticalDist > 1 || verticalDist < -3) return false;
+        int heightDiff = to.getY() - from.getY();
+        if (heightDiff > 1) return false; // Can't jump higher than 1 block
 
-        // Check if landing position is safe
-        if (!isWalkable(to)) return false;
+        double horizontalDist = Math.sqrt((to.getX() - from.getX()) * (to.getX() - from.getX()) +
+                (to.getZ() - from.getZ()) * (to.getZ() - from.getZ()));
 
-        // Check path is clear
-        return isJumpPathClear(from, to);
+        // Check jump feasibility
+        if (horizontalDist <= 1.0) return true; // Easy jump
+        if (horizontalDist <= 4.0 && heightDiff <= 0) return true; // Running jump
+
+        // Check for landing area
+        BlockState ground = world.getBlockState(to.down());
+        BlockState atPos = world.getBlockState(to);
+        BlockState above = world.getBlockState(to.up());
+
+        return isSolid(ground) && isPassable(atPos) && isPassable(above);
     }
 
     /**
-     * Check if can parkour to target (longer jumps, gaps)
+     * Check if can perform parkour movement to target
      */
     private boolean canParkourTo(BlockPos from, BlockPos to) {
-        // Check distance limits
-        double horizontalDist = Math.sqrt(Math.pow(to.getX() - from.getX(), 2) +
-                Math.pow(to.getZ() - from.getZ(), 2));
-        if (horizontalDist > 5.0 || horizontalDist < 2.0) return false;
+        if (isDangerous(to)) return false;
 
-        // Check landing area
-        if (!isWalkable(to)) return false;
+        double horizontalDist = Math.sqrt((to.getX() - from.getX()) * (to.getX() - from.getX()) +
+                (to.getZ() - from.getZ()) * (to.getZ() - from.getZ()));
 
-        // Ensure there's actually a gap to jump over
-        Vec3d center = Vec3d.ofCenter(from).lerp(Vec3d.ofCenter(to), 0.5);
-        BlockPos midPos = BlockPos.ofFloored(center);
-        if (isSolid(world.getBlockState(midPos.down()))) {
-            return false; // No gap to jump
-        }
+        // Only allow parkour for significant gaps
+        if (horizontalDist < 3.0) return false;
 
-        // Check jump path is clear
-        return isJumpPathClear(from, to);
+        // Check for safe landing
+        BlockState ground = world.getBlockState(to.down());
+        if (!isSolid(ground)) return false;
+
+        // Check path is clear for jumping
+        return isPathClear(from, to) && isPassable(world.getBlockState(to)) && isPassable(world.getBlockState(to.up()));
     }
 
     /**
-     * Check if can climb up from position
+     * Find safe fall position from current location
      */
-    private boolean canClimbUp(BlockPos pos) {
-        BlockPos upPos = pos.up();
+    private BlockPos findSafeFallPosition(BlockPos from) {
+        int maxFall = PathfinderConfig.MAX_FALL_DISTANCE;
 
-        // Must have climbable block or be able to step up
-        if (isClimbable(upPos) || isClimbable(pos)) {
-            return isClear(upPos) && isClear(upPos.up());
-        }
+        for (int y = 1; y <= maxFall; y++) {
+            BlockPos checkPos = from.down(y);
+            BlockState ground = world.getBlockState(checkPos);
 
-        // Check for step-up blocks (stairs, slabs)
-        BlockState upState = world.getBlockState(upPos);
-        return isClear(upPos) && isClear(upPos.up()) &&
-                isSolid(world.getBlockState(upPos.down()));
-    }
-
-    /**
-     * Find safe position to fall to
-     */
-    private BlockPos findSafeFallPosition(BlockPos pos) {
-        for (int y = pos.getY() - 1; y >= Math.max(pos.getY() - config.MAX_FALL_DISTANCE, world.getBottomY()); y--) {
-            BlockPos checkPos = new BlockPos(pos.getX(), y, pos.getZ());
-
-            if (isSolid(world.getBlockState(checkPos))) {
+            if (isSolid(ground)) {
                 BlockPos landingPos = checkPos.up();
-                if (isWalkable(landingPos)) {
+                if (!isDangerous(landingPos) && isPassable(world.getBlockState(landingPos))) {
                     return landingPos;
                 }
-                break;
-            }
-
-            if (isDangerous(checkPos)) {
-                break;
             }
         }
+
         return null;
     }
 
     /**
-     * Check if diagonal movement path is clear
+     * Check if path between two positions is clear
      */
-    private boolean isDiagonalClear(BlockPos from, BlockPos to) {
-        int dx = to.getX() - from.getX();
-        int dz = to.getZ() - from.getZ();
+    private boolean isPathClear(BlockPos from, BlockPos to) {
+        Vec3d fromVec = Vec3d.ofCenter(from);
+        Vec3d toVec = Vec3d.ofCenter(to);
+        Vec3d direction = toVec.subtract(fromVec).normalize();
 
-        // Check both adjacent cardinal directions are clear
-        BlockPos side1 = from.add(dx, 0, 0);
-        BlockPos side2 = from.add(0, 0, dz);
-
-        return isClear(side1) && isClear(side2) &&
-                isClear(side1.up()) && isClear(side2.up());
-    }
-
-    /**
-     * Check if jump path is clear of obstacles
-     */
-    private boolean isJumpPathClear(Vec3d from, Vec3d to) {
-        Vec3d direction = to.subtract(from);
-        int steps = Math.max(2, (int) direction.length());
-        direction = direction.normalize();
+        double distance = fromVec.distanceTo(toVec);
+        int steps = (int) Math.ceil(distance);
 
         for (int i = 1; i < steps; i++) {
-            Vec3d checkPos = from.add(direction.multiply(i));
+            Vec3d checkPos = fromVec.add(direction.multiply(i));
             BlockPos blockPos = BlockPos.ofFloored(checkPos);
 
-            // Check head clearance
-            if (!isClear(blockPos) || !isClear(blockPos.up())) {
+            if (!isPassable(world.getBlockState(blockPos)) ||
+                    !isPassable(world.getBlockState(blockPos.up()))) {
                 return false;
             }
         }
+
         return true;
     }
 
-    private boolean isJumpPathClear(BlockPos from, BlockPos to) {
-        return isJumpPathClear(Vec3d.ofCenter(from), Vec3d.ofCenter(to));
+    // ==================== BLOCK STATE CHECKING METHODS ====================
+
+    /**
+     * Check if should attempt parkour movements
+     */
+    private boolean shouldAttemptParkour(BlockPos pos, BlockPos goal) {
+        double distance = Math.sqrt(pos.getSquaredDistance(goal));
+        return distance > 10 && distance < 1000; // Use parkour for medium-long distances
     }
 
     /**
-     * Check if block position is clear for movement
+     * Check if diagonal movement is clear
      */
-    private boolean isClear(BlockPos pos) {
-        BlockState state = world.getBlockState(pos);
-        return state.isAir() || !state.blocksMovement();
+    private boolean isDiagonalClear(BlockPos from, BlockPos to) {
+        BlockPos corner1 = new BlockPos(from.getX(), from.getY(), to.getZ());
+        BlockPos corner2 = new BlockPos(to.getX(), from.getY(), from.getZ());
+        return isPassable(world.getBlockState(corner1)) && isPassable(world.getBlockState(corner2));
     }
 
     /**
-     * Check if block is solid for standing on
+     * Find safe fall position from current location
      */
-    private boolean isSolid(BlockState state) {
-        return state.isSolidBlock(world, BlockPos.ORIGIN) && !state.isAir();
+    private BlockPos findSafeFallPosition(BlockPos from) {
+        int maxFall = PathfinderConfig.MAX_FALL_DISTANCE;
+
+        for (int y = 1; y <= maxFall; y++) {
+            BlockPos checkPos = from.down(y);
+            BlockState ground = world.getBlockState(checkPos);
+
+            if (isSolid(ground)) {
+                BlockPos landingPos = checkPos.up();
+                if (!isDangerous(landingPos) && isPassable(world.getBlockState(landingPos))) {
+                    return landingPos;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
-     * Check if position/block is climbable
+     * Check if path between two positions is clear
      */
-    private boolean isClimbable(BlockPos pos) {
-        BlockState state = world.getBlockState(pos);
+    private boolean isPathClear(BlockPos from, BlockPos to) {
+        Vec3d fromVec = Vec3d.ofCenter(from);
+        Vec3d toVec = Vec3d.ofCenter(to);
+        Vec3d direction = toVec.subtract(fromVec).normalize();
+
+        double distance = fromVec.distanceTo(toVec);
+        int steps = (int) Math.ceil(distance);
+
+        for (int i = 1; i < steps; i++) {
+            Vec3d checkPos = fromVec.add(direction.multiply(i));
+            BlockPos blockPos = BlockPos.ofFloored(checkPos);
+
+            if (!isPassable(world.getBlockState(blockPos)) ||
+                    !isPassable(world.getBlockState(blockPos.up()))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Check if block state is passable
+     */
+    private boolean isPassable(BlockState state) {
         Block block = state.getBlock();
-
-        return block instanceof LadderBlock ||
-                block instanceof VineBlock ||
-                block instanceof ScaffoldingBlock ||
-                block instanceof TwistingVinesBlock ||
-                block instanceof WeepingVinesBlock;
+        return state.isAir() ||
+                block == Blocks.WATER ||
+                isClimbable(state) ||
+                block instanceof DoorBlock ||
+                block instanceof FenceGateBlock ||
+                block instanceof CarpetBlock ||
+                block instanceof FlowerBlock ||
+                block instanceof SaplingBlock ||
+                state.isIn(BlockTags.SIGNS);
     }
 
     /**
-     * Check if position is dangerous
+     * Check if block state is climbable
+     */
+    private boolean isClimbable(BlockState state) {
+        Block block = state.getBlock();
+        return block == Blocks.LADDER ||
+                block == Blocks.VINE ||
+                block == Blocks.SCAFFOLDING ||
+                block instanceof VineBlock;
+    }
+
+    /**
+     * Check if position is dangerous (hazards)
      */
     private boolean isDangerous(BlockPos pos) {
+        // Check for void (Y < 0 in overworld)
+        if (pos.getY() < -50) return true;
+
+        // Check surrounding blocks for hazards
         BlockState state = world.getBlockState(pos);
         Block block = state.getBlock();
 
-        // Immediate dangers
         if (block == Blocks.LAVA ||
                 block == Blocks.FIRE ||
-                block == Blocks.SOUL_FIRE ||
+                block == Blocks.MAGMA_BLOCK ||
                 block == Blocks.CACTUS ||
                 block == Blocks.SWEET_BERRY_BUSH ||
-                block == Blocks.WITHER_ROSE ||
-                block == Blocks.CAMPFIRE ||
-                block == Blocks.SOUL_CAMPFIRE) {
-            return true;
-        }
-
-        // Water check (dangerous if no water breathing)
-        if (block == Blocks.WATER && !hasWaterBreathing()) {
-            return true;
-        }
-
-        // Void check
-        if (pos.getY() < world.getBottomY() + 5) {
-            return true;
-        }
-
-        // Magma block check
-        if (block == Blocks.MAGMA_BLOCK) {
+                block == Blocks.WITHER_ROSE) {
             return true;
         }
 
@@ -454,10 +553,111 @@ public class AStarPathfinder {
     }
 
     /**
-     * Check if should attempt parkour based on distance to goal
+     * Check if player has water breathing (for water hazard assessment)
      */
-    private boolean shouldAttemptParkour(BlockPos pos, BlockPos goal) {
-        return pos.getSquaredDistance(goal) < 64 * 64; // Within 64 blocks
+    private boolean hasWaterBreathing() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) return false;
+
+        return mc.player.hasStatusEffect(StatusEffects.WATER_BREATHING) ||
+                mc.player.hasStatusEffect(StatusEffects.CONDUIT_POWER);
+    }
+
+    // ==================== UTILITY METHODS ====================
+
+    /**
+     * Clear search state for new pathfinding
+     */
+    private void clearSearchState() {
+        nodeCache.clear();
+        closedSet.clear();
+        openSet.clear();
+        iterations = 0;
+    }
+
+    /**
+     * Perform maintenance during long searches
+     */
+    private void performMaintenance() {
+        // Remove old nodes from cache to prevent memory issues
+        if (nodeCache.size() > PathfinderConfig.MAX_CACHED_NODES) {
+            nodeCache.clear();
+            System.out.println("Cleared node cache to prevent memory issues");
+        }
+
+        System.gc(); // Suggest garbage collection for long-running pathfinding
+    }
+
+    /**
+     * Determine movement type between two positions
+     */
+    private MovementType determineMovementType(BlockPos from, BlockPos to) {
+        int dx = Math.abs(to.getX() - from.getX());
+        int dy = to.getY() - from.getY();
+        int dz = Math.abs(to.getZ() - from.getZ());
+
+        if (dy > 1) return MovementType.CLIMB;
+        if (dy < -1) return MovementType.FALL;
+        if (dy == 1) return MovementType.JUMP;
+        if (dx + dz > 1) {
+            if (dx + dz > 3) return MovementType.PARKOUR;
+            return MovementType.DIAGONAL;
+        }
+
+        return MovementType.WALK;
+    }
+
+    /**
+     * Check if can climb to target position
+     */
+    private boolean canClimbTo(BlockPos from, BlockPos to) {
+        if (isDangerous(to)) return false;
+
+        // Check for climbable blocks (ladders, vines, scaffolding)
+        BlockState fromState = world.getBlockState(from);
+        BlockState toState = world.getBlockState(to);
+
+        if (isClimbable(fromState) || isClimbable(toState)) {
+            return isPassable(world.getBlockState(to)) && isPassable(world.getBlockState(to.up()));
+        }
+
+        // Check for blocks we can climb on
+        BlockState supportState = world.getBlockState(to.down());
+        return isSolid(supportState) && isPassable(world.getBlockState(to)) && isPassable(world.getBlockState(to.up()));
+    }
+
+    /**
+     * Check if block state is climbable
+     */
+    private boolean isClimbable(BlockState state) {
+        Block block = state.getBlock();
+        return block == Blocks.LADDER ||
+                block == Blocks.VINE ||
+                block == Blocks.SCAFFOLDING;
+    }
+
+    /**
+     * Check if block state is passable
+     */
+    private boolean isPassable(BlockState state) {
+        Block block = state.getBlock();
+        return state.isAir() ||
+                block == Blocks.WATER ||
+                isClimbable(state) ||
+                block instanceof DoorBlock ||
+                block instanceof FenceGateBlock ||
+                block instanceof CarpetBlock;
+    }
+
+    /**
+     * Check if block state is solid
+     */
+    private boolean isSolid(BlockState state) {
+        Block block = state.getBlock();
+        return !state.isAir() &&
+                block != Blocks.WATER &&
+                block != Blocks.LAVA &&
+                state.isSolidBlock(world, BlockPos.ORIGIN);
     }
 
     /**
@@ -468,42 +668,31 @@ public class AStarPathfinder {
     }
 
     /**
-     * Calculate heuristic distance (A* h-cost)
+     * Calculate heuristic distance (A* h-cost) with optimizations
      */
     private double calculateHeuristic(BlockPos current, BlockPos goal) {
         double dx = Math.abs(current.getX() - goal.getX());
         double dy = Math.abs(current.getY() - goal.getY());
         double dz = Math.abs(current.getZ() - goal.getZ());
 
-        // 3D Euclidean distance
+        // 3D Euclidean distance as base
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-        // Penalize height differences (climbing/falling is expensive)
-        double heightPenalty = dy * 0.5;
+        // Height penalty (climbing/falling is expensive)
+        double heightPenalty = dy * 0.3;
 
-        // Add obstacle penalty for walls
-        double obstaclePenalty = 0;
-        if (isObstructed(current, goal)) {
-            obstaclePenalty = 5.0;
+        // Add penalty for very low positions (void avoidance)
+        if (current.getY() < 10) {
+            heightPenalty += (10 - current.getY()) * 2.0;
         }
 
-        return distance + heightPenalty + obstaclePenalty;
-    }
-
-    /**
-     * Check if path is obstructed by walls
-     */
-    private boolean isObstructed(BlockPos from, BlockPos to) {
-        Vec3d direction = Vec3d.of(to.subtract(from)).normalize();
-
-        // Check a few blocks ahead
-        for (int i = 1; i <= 3; i++) {
-            BlockPos checkPos = from.add((int)(direction.x * i), 0, (int)(direction.z * i));
-            if (isSolid(world.getBlockState(checkPos))) {
-                return true;
-            }
+        // Distance-based optimizations
+        double optimizationFactor = 1.0;
+        if (distance > 100) {
+            optimizationFactor = 0.9; // Slightly favor long-distance paths
         }
-        return false;
+
+        return (distance + heightPenalty) * optimizationFactor;
     }
 
     /**
@@ -516,107 +705,78 @@ public class AStarPathfinder {
         // Base distance cost
         double distance = Math.sqrt(fromPos.getSquaredDistance(toPos));
 
-        // Movement type multipliers
+        // Movement type cost multipliers
         MovementType movementType = determineMovementType(fromPos, toPos);
         double multiplier = switch (movementType) {
             case WALK -> 1.0;
             case DIAGONAL -> 1.414; // √2
-            case JUMP -> 1.3;
-            case CLIMB -> 1.8;
-            case FALL -> 0.9;
-            case PARKOUR -> 2.5;
+            case JUMP -> 1.5;
+            case CLIMB -> 2.2;
+            case FALL -> 0.8; // Falling is faster
+            case PARKOUR -> 3.0; // Expensive but sometimes necessary
         };
 
         // Environmental penalties
         if (isDangerous(toPos)) {
-            multiplier *= 3.0; // Heavily penalize dangerous moves
+            multiplier *= 5.0; // Heavily penalize dangerous moves
         }
 
-        if (toPos.getY() < 10) {
-            multiplier *= 1.2; // Slightly penalize low altitude
+        // Encourage staying at safe heights
+        if (toPos.getY() < 5) {
+            multiplier *= 1.5;
         }
 
         return distance * multiplier;
     }
 
     /**
-     * Determine type of movement between positions
+     * Reconstruct path from goal node to start
+     */
+    private List<PathNode> reconstructPath(PathNode goalNode) {
+        List<PathNode> path = new ArrayList<>();
+        PathNode current = goalNode;
+
+        while (current != null) {
+            path.add(current);
+            current = current.getParent();
+        }
+
+        Collections.reverse(path);
+        return path;
+    }
+
+    /**
+     * Determine movement type between two positions
      */
     private MovementType determineMovementType(BlockPos from, BlockPos to) {
         int dx = Math.abs(to.getX() - from.getX());
         int dy = to.getY() - from.getY();
         int dz = Math.abs(to.getZ() - from.getZ());
 
-        if (dy > 0) {
-            if (dx > 1 || dz > 1 || dy > 1) return MovementType.PARKOUR;
-            if (isClimbable(to) || isClimbable(from)) return MovementType.CLIMB;
-            return MovementType.JUMP;
-        } else if (dy < 0) {
-            return MovementType.FALL;
-        } else if (dx > 0 && dz > 0) {
+        if (dy > 1) return MovementType.CLIMB;
+        if (dy < -1) return MovementType.FALL;
+        if (dy == 1) return MovementType.JUMP;
+        if (dx + dz > 1) {
+            if (dx + dz > 3) return MovementType.PARKOUR;
             return MovementType.DIAGONAL;
         }
+
         return MovementType.WALK;
     }
 
     /**
-     * Check if player has water breathing effect
+     * Calculate total path length for statistics
      */
-    private boolean hasWaterBreathing() {
-        return MinecraftClient.getInstance().player != null &&
-                MinecraftClient.getInstance().player.hasStatusEffect(StatusEffects.WATER_BREATHING);
-    }
+    private double calculatePathLength(List<PathNode> path) {
+        if (path.size() < 2) return 0.0;
 
-    /**
-     * Reconstruct path from goal back to start
-     */
-    private List<PathNode> reconstructPath(PathNode goal) {
-        List<PathNode> path = new ArrayList<>();
-        PathNode current = goal;
-
-        while (current != null) {
-            path.add(0, current);
-            current = current.getParent();
+        double totalLength = 0.0;
+        for (int i = 1; i < path.size(); i++) {
+            BlockPos prev = path.get(i - 1).getPos();
+            BlockPos curr = path.get(i).getPos();
+            totalLength += Math.sqrt(prev.getSquaredDistance(curr));
         }
 
-        return path;
-    }
-
-    /**
-     * Clear search state for new pathfinding
-     */
-    private void clearSearchState() {
-        openSet.clear();
-        closedSet.clear();
-        iterations = 0;
-
-        // Limit cache size for memory management
-        if (nodeCache.size() > config.MAX_CACHED_NODES) {
-            nodeCache.clear();
-        }
-    }
-
-    /**
-     * Perform maintenance during search
-     */
-    private void performMaintenance() {
-        // Clean up old cache entries
-        if (nodeCache.size() > config.MAX_CACHED_NODES * 1.5) {
-            // Remove random entries from closed set
-            Iterator<Map.Entry<BlockPos, PathNode>> it = nodeCache.entrySet().iterator();
-            while (it.hasNext() && nodeCache.size() > config.MAX_CACHED_NODES) {
-                Map.Entry<BlockPos, PathNode> entry = it.next();
-                if (closedSet.contains(entry.getKey()) && Math.random() < 0.3) {
-                    it.remove();
-                }
-            }
-        }
-    }
-
-    /**
-     * Movement types for pathfinding cost calculation
-     */
-    public enum MovementType {
-        WALK, DIAGONAL, JUMP, CLIMB, FALL, PARKOUR
+        return totalLength;
     }
 }

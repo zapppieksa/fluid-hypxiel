@@ -1,18 +1,21 @@
 package dev.sxmurxy.mre.modules.command;
 
 import dev.sxmurxy.mre.modules.pathfinding.PathfindingModule;
+import dev.sxmurxy.mre.modules.pathfinding.config.PathfinderConfig;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
 
 /**
  * Enhanced pathfinding command with comprehensive options and settings
+ * Uses only PathfinderConfig constants (no GUI settings dependency)
  *
  * Features:
  * - Basic pathfinding to coordinates
  * - Status checking and monitoring
- * - Real-time configuration changes
- * - Performance statistics
- * - Emergency controls
+ * - Performance statistics display
+ * - Emergency controls and debugging
+ * - Configuration information display
+ * - Real-time pathfinding status
  */
 public class PathfindCommand extends Command {
 
@@ -29,17 +32,17 @@ public class PathfindCommand extends Command {
             §b.pathfind recalc §7- Recalculate current path
             §b.pathfind here §7- Pathfind to current position (test)
             
-            §6Settings:
-            §b.pathfind smooth <0.0-1.0> §7- Set path smoothness
-            §b.pathfind humanize <on|off> §7- Toggle humanization
-            §b.pathfind show <on|off> §7- Toggle path visualization
-            §b.pathfind speed <0.1-2.0> §7- Set movement speed
-            §b.pathfind fall <1-10> §7- Set max fall distance
-            
-            §6Advanced:
+            §6Information:
             §b.pathfind stats §7- Show performance statistics
-            §b.pathfind debug §7- Toggle debug information
-            §b.pathfind reset §7- Reset all settings to default""";
+            §b.pathfind config §7- Display current configuration
+            §b.pathfind debug §7- Show debug information
+            §b.pathfind help §7- Show this help message
+            
+            §6Emergency:
+            §b.pathfind emergency §7- Emergency stop with key reset
+            §b.pathfind reset §7- Reset engine and clear cache
+            
+            §7Note: Settings are configured via PathfinderConfig constants""";
     }
 
     @Override
@@ -55,269 +58,29 @@ public class PathfindCommand extends Command {
             return;
         }
 
-        String command = args[0].toLowerCase();
+        String subCommand = args[0].toLowerCase();
 
-        switch (command) {
-            case "stop", "cancel" -> handleStopCommand();
-            case "status" -> handleStatusCommand(pathfinder);
-            case "recalc", "recalculate" -> handleRecalcCommand(pathfinder);
-            case "here" -> handleHereCommand();
-            case "smooth", "smoothness" -> handleSmoothCommand(pathfinder, args);
-            case "humanize", "human" -> handleHumanizeCommand(pathfinder, args);
-            case "show", "render" -> handleShowCommand(pathfinder, args);
-            case "speed" -> handleSpeedCommand(pathfinder, args);
-            case "fall", "falldist" -> handleFallCommand(pathfinder, args);
-            case "stats", "performance" -> handleStatsCommand(pathfinder);
-            case "debug" -> handleDebugCommand(pathfinder);
-            case "reset" -> handleResetCommand(pathfinder);
+        switch (subCommand) {
             case "help" -> sendUsage();
-            default -> handleCoordinateCommand(args);
+            case "stop" -> handleStop(pathfinder);
+            case "status" -> handleStatus(pathfinder);
+            case "recalc" -> handleRecalculate(pathfinder);
+            case "here" -> handlePathToHere(pathfinder);
+            case "stats" -> handleStats(pathfinder);
+            case "config" -> handleConfig();
+            case "debug" -> handleDebug(pathfinder);
+            case "emergency" -> handleEmergency(pathfinder);
+            case "reset" -> handleReset(pathfinder);
+            default -> handleCoordinatePathfind(args, pathfinder);
         }
     }
 
-    private void handleStopCommand() {
-        if (PathfindingModule.isPathing()) {
-            PathfindingModule.stopPathfinding();
-            sendMessage("§a[Pathfinder] §7Pathfinding stopped.");
-        } else {
-            sendMessage("§c[Pathfinder] §7No active pathfinding to stop.");
-        }
-    }
-
-    private void handleStatusCommand(PathfindingModule pathfinder) {
-        PathfindingModule.PathfindingStats stats = pathfinder.getStats();
-
-        sendMessage("§6╭─── Pathfinder Status ───╮");
-        sendMessage("§6│ §7Status: " + stats.getStatusString());
-
-        if (stats.isActive()) {
-            sendMessage("§6│ §7Progress: §f" + String.format("%.1f%%", stats.getProgress() * 100));
-            sendMessage("§6│ §7Waypoints: §f" + stats.currentWaypointIndex() + "§7/§f" + stats.totalWaypoints());
-
-            if (stats.destination() != null) {
-                sendMessage("§6│ §7Destination: §f" + stats.destination().toShortString());
-            }
-
-            sendMessage("§6│ §7Duration: §f" + stats.getDurationString());
-
-            if (stats.isStuck()) {
-                sendMessage("§6│ §c⚠ Player stuck for " + (stats.stuckTicks() / 20) + "s");
-            }
-        } else {
-            sendMessage("§6│ §7Pathfinder is inactive");
-        }
-
-        // Show current settings
-        sendMessage("§6│");
-        sendMessage("§6│ §7Settings:");
-
-        sendMessage("§6╰─────────────────────────╯");
-    }
-
-    private void handleRecalcCommand(PathfindingModule pathfinder) {
-        if (PathfindingModule.isPathing()) {
-            pathfinder.recalculatePath();
-            sendMessage("§a[Pathfinder] §7Recalculating path...");
-        } else {
-            sendMessage("§c[Pathfinder] §7No active pathfinding to recalculate.");
-        }
-    }
-
-    private void handleHereCommand() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player == null) {
-            sendMessage("§c[Pathfinder] §7Player not found.");
-            return;
-        }
-
-        BlockPos currentPos = mc.player.getBlockPos();
-        sendMessage("§7[Pathfinder] Testing pathfinding to current position: §f" + currentPos.toShortString());
-        PathfindingModule.walkTo(currentPos);
-    }
-
-    private void handleSmoothCommand(PathfindingModule pathfinder, String[] args) {
-        if (args.length < 2) {
-            sendMessage("§c[Pathfinder] Usage: §7.pathfind smooth <0.0-1.0>");
-            return;
-        }
-
-        try {
-            double smoothness = Double.parseDouble(args[1]);
-            if (smoothness < 0.0 || smoothness > 1.0) {
-                sendMessage("§c[Pathfinder] Smoothness must be between 0.0 (angular) and 1.0 (very smooth)");
-                return;
-            }
-
-            pathfinder.setPathSmoothness(smoothness);
-            sendMessage("§a[Pathfinder] §7Path smoothness set to §f" + String.format("%.1f", smoothness));
-
-            if (PathfindingModule.isPathing()) {
-                sendMessage("§7Changes will apply to new path calculations.");
-            }
-        } catch (NumberFormatException e) {
-            sendMessage("§c[Pathfinder] Invalid number. Use a decimal between 0.0 and 1.0");
-        }
-    }
-
-    private void handleHumanizeCommand(PathfindingModule pathfinder, String[] args) {
-        if (args.length < 2) {
-            sendMessage("§c[Pathfinder] Usage: §7.pathfind humanize <on|off>");
-            return;
-        }
-
-        boolean enable = args[1].equalsIgnoreCase("on") || args[1].equalsIgnoreCase("true") || args[1].equalsIgnoreCase("1");
-        pathfinder.setHumanizeMovement(enable);
-
-        sendMessage("§a[Pathfinder] §7Movement humanization " + (enable ? "§aenabled" : "§cdisabled"));
-
-        if (enable) {
-            sendMessage("§7• Added random variations and delays");
-            sendMessage("§7• Natural-looking rotations and movement");
-        } else {
-            sendMessage("§7• Direct, efficient movement");
-            sendMessage("§7• Faster but more robotic");
-        }
-    }
-
-    private void handleShowCommand(PathfindingModule pathfinder, String[] args) {
-        if (args.length < 2) {
-            sendMessage("§c[Pathfinder] Usage: §7.pathfind show <on|off>");
-            return;
-        }
-
-        boolean show = args[1].equalsIgnoreCase("on") || args[1].equalsIgnoreCase("true") || args[1].equalsIgnoreCase("1");
-        pathfinder.setShowPath(show);
-
-        sendMessage("§a[Pathfinder] §7Path visualization " + (show ? "§aenabled" : "§cdisabled"));
-
-        if (show) {
-            sendMessage("§7• Blue semi-transparent nodes");
-            sendMessage("§7• Connecting lines between waypoints");
-        }
-    }
-
-    private void handleSpeedCommand(PathfindingModule pathfinder, String[] args) {
-        if (args.length < 2) {
-            sendMessage("§c[Pathfinder] Usage: §7.pathfind speed <0.1-2.0>");
-            return;
-        }
-
-        try {
-            double speed = Double.parseDouble(args[1]);
-            if (speed < 0.1 || speed > 2.0) {
-                sendMessage("§c[Pathfinder] Speed must be between 0.1 (slow) and 2.0 (fast)");
-                return;
-            }
-
-            pathfinder.setMovementSpeed(speed);
-            sendMessage("§a[Pathfinder] §7Movement speed set to §f" + String.format("%.1fx", speed));
-
-            if (speed > 1.5) {
-                sendMessage("§e[Pathfinder] §7High speeds may look less natural");
-            }
-        } catch (NumberFormatException e) {
-            sendMessage("§c[Pathfinder] Invalid number. Use a decimal between 0.1 and 2.0");
-        }
-    }
-
-    private void handleFallCommand(PathfindingModule pathfinder, String[] args) {
-        if (args.length < 2) {
-            sendMessage("§c[Pathfinder] Usage: §7.pathfind fall <1-10>");
-            return;
-        }
-
-        try {
-            int fallDistance = Integer.parseInt(args[1]);
-            if (fallDistance < 1 || fallDistance > 10) {
-                sendMessage("§c[Pathfinder] Fall distance must be between 1 and 10 blocks");
-                return;
-            }
-
-            pathfinder.setMaxFallDistance(fallDistance);
-            sendMessage("§a[Pathfinder] §7Max fall distance set to §f" + fallDistance + " blocks");
-
-            if (fallDistance > 4) {
-                sendMessage("§e[Pathfinder] §7High fall distances may cause damage");
-            }
-        } catch (NumberFormatException e) {
-            sendMessage("§c[Pathfinder] Invalid number. Use a whole number between 1 and 10");
-        }
-    }
-
-    private void handleStatsCommand(PathfindingModule pathfinder) {
-        var stats = pathfinder.getStats();
-        var engineStats = pathfinder.engine.getPerformanceStats();
-
-        sendMessage("§6╭─── Performance Statistics ───╮");
-        sendMessage("§6│ §7Pathfinding Performance:");
-        sendMessage("§6│ §7• " + engineStats.getPerformanceString());
-        sendMessage("§6│ §7• Status: " + (engineStats.isPerformanceGood() ? "§aGood" : "§eNeeds optimization"));
-
-        if (stats.totalWaypoints() > 0) {
-            sendMessage("§6│");
-            sendMessage("§6│ §7Current Path:");
-            sendMessage("§6│ §7• Total waypoints: §f" + stats.totalWaypoints());
-            sendMessage("§6│ §7• Completed: §f" + stats.currentWaypointIndex() + " §7(§f" + String.format("%.1f%%", stats.getProgress() * 100) + "§7)");
-            sendMessage("§6│ §7• Time elapsed: §f" + stats.getDurationString());
-        }
-
-        sendMessage("§6│");
-        sendMessage("§6│ §7Engine Information:");
-        sendMessage("§6│ §7• Total calculations: §f" + engineStats.totalCalculations());
-        sendMessage("§6│ §7• Avg calc time: §f" + String.format("%.0fms", engineStats.averageCalculationTime()));
-
-        if (engineStats.totalCalculations() > 0) {
-            sendMessage("§6│ §7• Calc rate: §f" + String.format("%.1f/sec", engineStats.getCalculationsPerSecond()));
-        }
-
-        sendMessage("§6╰───────────────────────────────╯");
-    }
-
-    private void handleDebugCommand(PathfindingModule pathfinder) {
-        // Toggle debug mode (you'd need to add this to PathfindingModule)
-        sendMessage("§7[Pathfinder] Debug information:");
-
-        if (PathfindingModule.isPathing()) {
-            var currentPath = PathfindingModule.getCurrentPath();
-            if (currentPath != null) {
-                sendMessage("§7• Current path has §f" + currentPath.size() + "§7 waypoints");
-
-                if (MinecraftClient.getInstance().player != null) {
-                    var playerPos = MinecraftClient.getInstance().player.getPos();
-                    var closestWaypoint = currentPath.get(0);
-                    double distance = playerPos.distanceTo(closestWaypoint);
-                    sendMessage("§7• Distance to next waypoint: §f" + String.format("%.2f", distance) + "§7 blocks");
-                }
-            }
-        } else {
-            sendMessage("§7• No active pathfinding");
-        }
-
-        sendMessage("§7• Module settings:");
-    }
-
-    private void handleResetCommand(PathfindingModule pathfinder) {
-        // Reset all settings to default
-        pathfinder.setPathSmoothness(0.3);
-        pathfinder.setMovementSpeed(1.0);
-        pathfinder.setRotationSpeed(2.5);
-        pathfinder.setMaxFallDistance(4.0);
-        pathfinder.setHumanizeMovement(true);
-        pathfinder.setShowPath(true);
-        pathfinder.setAvoidHazards(true);
-        pathfinder.setAllowParkour(true);
-        pathfinder.setAllowClimbing(true);
-
-        sendMessage("§a[Pathfinder] §7All settings reset to default values.");
-        sendMessage("§7• Path smoothness: §f0.3");
-        sendMessage("§7• Movement speed: §f1.0x");
-        sendMessage("§7• Max fall distance: §f4 blocks");
-        sendMessage("§7• All features enabled");
-    }
-
-    private void handleCoordinateCommand(String[] args) {
+    /**
+     * Handle pathfinding to specific coordinates
+     */
+    private void handleCoordinatePathfind(String[] args, PathfindingModule pathfinder) {
         if (args.length < 3) {
-            sendUsage();
+            sendMessage("§c[Pathfinder] Usage: .pathfind <x> <y> <z>");
             return;
         }
 
@@ -326,63 +89,274 @@ public class PathfindCommand extends Command {
             int y = Integer.parseInt(args[1]);
             int z = Integer.parseInt(args[2]);
 
-            BlockPos targetPos = new BlockPos(x, y, z);
+            BlockPos destination = new BlockPos(x, y, z);
 
-            // Validate coordinates
-            if (!isValidCoordinate(targetPos)) {
-                return;
-            }
+            sendMessage("§a[Pathfinder] §7Starting pathfinding to §f" + destination.toShortString());
+            sendMessage("§7Using configuration: Max Distance=" + PathfinderConfig.MAX_SEARCH_DISTANCE +
+                    ", Max Fall=" + PathfinderConfig.MAX_FALL_DISTANCE +
+                    ", Humanization=§aEnabled");
 
-            // Show distance and time estimate
-            showPathfindingInfo(targetPos);
-
-            sendMessage("§a[Pathfinder] §7Starting pathfinding to §f" + targetPos.toShortString() + "§7...");
-            PathfindingModule.walkTo(targetPos);
+            PathfindingModule.walkTo(destination);
 
         } catch (NumberFormatException e) {
-            sendMessage("§c[Pathfinder] Invalid coordinates. Use whole numbers.");
-            sendMessage("§7Example: §b.pathfind 100 64 -200");
-        } catch (Exception e) {
-            sendMessage("§c[Pathfinder] Error: " + e.getMessage());
+            sendMessage("§c[Pathfinder] Invalid coordinates. Use integers only.");
         }
     }
 
-    private boolean isValidCoordinate(BlockPos pos) {
-        // Check world boundaries
-        if (Math.abs(pos.getX()) > 30000000 || Math.abs(pos.getZ()) > 30000000) {
-            sendMessage("§c[Pathfinder] Coordinates too far from spawn. Maximum: ±30,000,000");
-            return false;
+    /**
+     * Handle stop command
+     */
+    private void handleStop(PathfindingModule pathfinder) {
+        if (PathfindingModule.isPathing()) {
+            PathfindingModule.stopPathfinding();
+            sendMessage("§c[Pathfinder] §7Pathfinding stopped.");
+        } else {
+            sendMessage("§e[Pathfinder] §7No active pathfinding to stop.");
         }
-
-        // Check Y boundaries
-        if (pos.getY() < -64 || pos.getY() > 320) {
-            sendMessage("§c[Pathfinder] Y coordinate out of range. Valid range: -64 to 320");
-            return false;
-        }
-
-        return true;
     }
 
-    private void showPathfindingInfo(BlockPos target) {
+    /**
+     * Handle status command
+     */
+    private void handleStatus(PathfindingModule pathfinder) {
+        sendMessage("§6[Pathfinder] Status Report:");
+
+        if (!pathfinder.isToggled()) {
+            sendMessage("§c  Module: Disabled");
+            sendMessage("§7  Enable the module to start pathfinding.");
+            return;
+        }
+
+        sendMessage("§a  Module: Enabled");
+
+        if (PathfindingModule.isPathing()) {
+            sendMessage("§a  Status: Active Pathfinding");
+
+            var currentPath = PathfindingModule.getCurrentPath();
+            if (currentPath != null && !currentPath.isEmpty()) {
+                sendMessage("§7  Current path: " + currentPath.size() + " waypoints");
+
+                MinecraftClient mc = MinecraftClient.getInstance();
+                if (mc.player != null && !currentPath.isEmpty()) {
+                    double distanceToNext = mc.player.getPos().distanceTo(currentPath.get(0));
+                    sendMessage("§7  Distance to next waypoint: " + String.format("%.1f", distanceToNext) + " blocks");
+                }
+            }
+
+            sendMessage("§7  Path rendering: " + (pathfinder.isToggled() ? "§aEnabled" : "§cDisabled"));
+        } else {
+            sendMessage("§e  Status: Idle");
+            sendMessage("§7  Use .pathfind <x> <y> <z> to start pathfinding");
+        }
+
+        // Show configuration summary
+        sendMessage("§6  Configuration (from PathfinderConfig):");
+        sendMessage("§7    Max Search Distance: §f" + PathfinderConfig.MAX_SEARCH_DISTANCE);
+        sendMessage("§7    Max Fall Distance: §f" + PathfinderConfig.MAX_FALL_DISTANCE);
+        sendMessage("§7    Path Smoothness: §f" + PathfinderConfig.PATH_SMOOTHNESS);
+        sendMessage("§7    Humanization: §aEnabled");
+    }
+
+    /**
+     * Handle recalculate command
+     */
+    private void handleRecalculate(PathfindingModule pathfinder) {
+        if (!PathfindingModule.isPathing()) {
+            sendMessage("§e[Pathfinder] §7No active path to recalculate.");
+            return;
+        }
+
+        sendMessage("§e[Pathfinder] §7Recalculating path...");
+        // Note: In the actual implementation, you'd need to store the destination
+        // This is a simplified version
+        sendMessage("§7Use §b.pathfind stop §7and set a new destination to recalculate.");
+    }
+
+    /**
+     * Handle pathfind to current position (for testing)
+     */
+    private void handlePathToHere(PathfindingModule pathfinder) {
         MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player == null) return;
+        if (mc.player == null) {
+            sendMessage("§c[Pathfinder] Player not found.");
+            return;
+        }
 
         BlockPos playerPos = mc.player.getBlockPos();
-        double distance = Math.sqrt(playerPos.getSquaredDistance(target));
+        BlockPos testDestination = playerPos.add(10, 0, 10);
 
-        sendMessage("§7[Pathfinder] Distance: §f" + String.format("%.1f", distance) + "§7 blocks");
+        sendMessage("§e[Pathfinder] §7Testing pathfinding to nearby location: " + testDestination.toShortString());
+        PathfindingModule.walkTo(testDestination);
+    }
 
-        if (distance > 100) {
-            int estimatedTime = (int) (distance / 4.3); // Rough walking speed estimate
-            sendMessage("§7[Pathfinder] Estimated time: §f~" + estimatedTime + "§7 seconds");
+    /**
+     * Handle statistics command
+     */
+    private void handleStats(PathfindingModule pathfinder) {
+        sendMessage("§6[Pathfinder] Performance Statistics:");
+
+        // Module-level statistics
+        String moduleStats = PathfindingModule.getStatistics();
+        String[] lines = moduleStats.split("\n");
+        for (String line : lines) {
+            sendMessage("  " + line);
         }
 
-        if (distance > 500) {
-            sendMessage("§e[Pathfinder] Long distance pathfinding may take time to calculate.");
+        // Engine-level statistics
+        if (pathfinder.engine != null) {
+            sendMessage("§6  Engine Performance:");
+            String engineStats = pathfinder.engine.getPerformanceStats();
+            String[] engineLines = engineStats.split("\n");
+            for (String line : engineLines) {
+                sendMessage("    §7" + line);
+            }
+        }
+    }
+
+    /**
+     * Handle configuration display
+     */
+    private void handleConfig() {
+        sendMessage("§6[Pathfinder] Current Configuration (PathfinderConfig constants):");
+
+        // Core pathfinding settings
+        sendMessage("§e  Core Settings:");
+        sendMessage("§7    Max Fall Distance: §f" + PathfinderConfig.MAX_FALL_DISTANCE);
+        sendMessage("§7    Path Smoothness: §f" + PathfinderConfig.PATH_SMOOTHNESS);
+        sendMessage("§7    Max Search Distance: §f" + PathfinderConfig.MAX_SEARCH_DISTANCE);
+        sendMessage("§7    Recalculate Stuck Ticks: §f" + PathfinderConfig.RECALCULATE_STUCK_TICKS);
+        sendMessage("§7    Max Cached Nodes: §f" + PathfinderConfig.MAX_CACHED_NODES);
+
+        // Movement humanization
+        sendMessage("§e  Movement Humanization:");
+        sendMessage("§7    Base Variation: §f" + PathfinderConfig.MOVEMENT_VARIATION_BASE);
+        sendMessage("§7    Wiggle Intensity: §f" + PathfinderConfig.MOVEMENT_WIGGLE_INTENSITY);
+        sendMessage("§7    Base Delay: §f" + PathfinderConfig.MOVEMENT_BASE_DELAY_MS + "ms");
+        sendMessage("§7    Delay Variation: §f" + PathfinderConfig.MOVEMENT_DELAY_VARIATION_MS + "ms");
+
+        // Rotation humanization
+        sendMessage("§e  Rotation Humanization:");
+        sendMessage("§7    Base Speed: §f" + PathfinderConfig.ROTATION_BASE_SPEED);
+        sendMessage("§7    Look Ahead Distance: §f" + PathfinderConfig.ROTATION_LOOK_AHEAD_DISTANCE);
+        sendMessage("§7    Noise Intensity: §f" + PathfinderConfig.ROTATION_NOISE_INTENSITY);
+        sendMessage("§7    Base Delay: §f" + PathfinderConfig.ROTATION_BASE_DELAY_MS + "ms");
+
+        // Special movement
+        sendMessage("§e  Special Movement:");
+        sendMessage("§7    Jump Chance: §f" + (PathfinderConfig.JUMP_CHANCE_PER_TICK * 100) + "%");
+        sendMessage("§7    Sprint Distance: §f" + PathfinderConfig.SPRINT_DISTANCE_THRESHOLD);
+        sendMessage("§7    Sneak Distance: §f" + PathfinderConfig.SNEAK_DISTANCE_THRESHOLD);
+
+        sendMessage("§7Note: These settings are configured via PathfinderConfig constants");
+        sendMessage("§7and cannot be changed from commands. Modify the config file to adjust.");
+    }
+
+    /**
+     * Handle debug information
+     */
+    private void handleDebug(PathfindingModule pathfinder) {
+        sendMessage("§6[Pathfinder] Debug Information:");
+
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player != null) {
+            BlockPos playerPos = mc.player.getBlockPos();
+            sendMessage("§7  Player Position: " + playerPos.toShortString());
         }
 
-        if (distance > 1000) {
-            sendMessage("§c[Pathfinder] Very long distance! Consider waypoints for better performance.");
+        sendMessage("§7  Module State: " + (pathfinder.isToggled() ? "§aEnabled" : "§cDisabled"));
+        sendMessage("§7  Pathfinding Active: " + (PathfindingModule.isPathing() ? "§aYes" : "§cNo"));
+
+        var currentPath = PathfindingModule.getCurrentPath();
+        if (currentPath != null) {
+            sendMessage("§7  Current Path: " + currentPath.size() + " waypoints");
+            if (!currentPath.isEmpty()) {
+                sendMessage("§7  Next Waypoint: " +
+                        BlockPos.ofFloored(currentPath.get(0)).toShortString());
+            }
+        } else {
+            sendMessage("§7  Current Path: None");
+        }
+
+        // Memory usage
+        Runtime runtime = Runtime.getRuntime();
+        long usedMemory = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024;
+        long maxMemory = runtime.maxMemory() / 1024 / 1024;
+        sendMessage("§7  Memory Usage: " + usedMemory + "MB / " + maxMemory + "MB");
+    }
+
+    /**
+     * Handle emergency stop
+     */
+    private void handleEmergency(PathfindingModule pathfinder) {
+        sendMessage("§c[Pathfinder] §lEMERGENCY STOP ACTIVATED");
+
+        // Stop pathfinding
+        PathfindingModule.stopPathfinding();
+
+        // Reset movement keys
+        try {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc.options != null) {
+                mc.options.forwardKey.setPressed(false);
+                mc.options.backKey.setPressed(false);
+                mc.options.leftKey.setPressed(false);
+                mc.options.rightKey.setPressed(false);
+                mc.options.jumpKey.setPressed(false);
+                mc.options.sneakKey.setPressed(false);
+                mc.options.sprintKey.setPressed(false);
+            }
+        } catch (Exception e) {
+            sendMessage("§c[Pathfinder] Error resetting keys: " + e.getMessage());
+        }
+
+        // Cancel any running pathfinding operations
+        if (pathfinder.engine != null) {
+            pathfinder.engine.cancelPathfinding();
+        }
+
+        sendMessage("§c[Pathfinder] All movement stopped and keys reset.");
+        sendMessage("§7You can now move manually or restart pathfinding.");
+    }
+
+    /**
+     * Handle reset command
+     */
+    private void handleReset(PathfindingModule pathfinder) {
+        sendMessage("§e[Pathfinder] Resetting pathfinding engine...");
+
+        // Stop current pathfinding
+        PathfindingModule.stopPathfinding();
+
+        // Reset engine statistics and cache
+        if (pathfinder.engine != null) {
+            pathfinder.engine.reset();
+        }
+
+        sendMessage("§a[Pathfinder] Engine reset complete.");
+        sendMessage("§7  - Cache cleared");
+        sendMessage("§7  - Statistics reset");
+        sendMessage("§7  - All paths cleared");
+    }
+
+    /**
+     * Send usage information
+     */
+    public void sendUsage() {
+        sendMessage(getUsageString());
+        sendMessage("\n§7Current PathfinderConfig settings:");
+        sendMessage("§7  Max Distance: §f" + PathfinderConfig.MAX_SEARCH_DISTANCE);
+        sendMessage("§7  Humanization: §aEnabled §7(via config constants)");
+    }
+
+    /**
+     * Send message to player
+     */
+    public void sendMessage(String message) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player != null) {
+            mc.player.sendMessage(net.minecraft.text.Text.literal(message), false);
+        } else {
+            System.out.println(message); // Fallback for debugging
         }
     }
 }

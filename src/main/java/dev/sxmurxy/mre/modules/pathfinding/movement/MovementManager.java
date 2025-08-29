@@ -11,13 +11,16 @@ import java.util.Random;
 
 /**
  * Handles humanized movement with realistic timing, variations, and imperfections
+ * Uses only PathfinderConfig constants for all settings (no GUI dependency)
  *
  * Features:
- * - Random movement variations and wiggles
- * - Variable speed and timing delays
- * - Realistic acceleration and deceleration
- * - Stuck detection and recovery
+ * - Random movement variations and wiggles using config constants
+ * - Variable speed and timing delays from config
+ * - Realistic acceleration and deceleration patterns
+ * - Stuck detection and recovery mechanisms
  * - Natural movement patterns that look human
+ * - Sprint management for parkour movements
+ * - Sneak precision for tight spaces
  */
 public class MovementManager {
 
@@ -32,16 +35,21 @@ public class MovementManager {
     private int stuckTicks = 0;
     private boolean isUnsticking = false;
 
-    // Humanization state
+    // Humanization state (using config constants)
     private long nextMovementDelay = 0;
     private Vec3d currentVariation = Vec3d.ZERO;
     private double speedMultiplier = 1.0;
     private boolean wasMoving = false;
 
-    // Movement rhythm (for natural walking patterns)
+    // Movement rhythm and timing
     private long movementStartTime = 0;
     private double movementPhase = 0.0;
     private boolean isAccelerating = true;
+
+    // Special movement state
+    private boolean shouldSprint = false;
+    private boolean shouldSneak = false;
+    private int jumpCooldown = 0;
 
     public MovementManager(PathfinderConfig config) {
         this.config = config;
@@ -49,14 +57,14 @@ public class MovementManager {
     }
 
     /**
-     * Update player movement towards target with humanization
+     * Update player movement towards target with humanization based on config
      */
     public void updateMovement(ClientPlayerEntity player, Vec3d targetNode, Vec3d nextNode) {
         if (player == null || targetNode == null) return;
 
         long currentTime = System.currentTimeMillis();
 
-        // Apply movement delay for humanization
+        // Apply movement delay for humanization (using config constants)
         if (currentTime < nextMovementDelay) {
             return; // Wait for delay to pass
         }
@@ -69,15 +77,21 @@ public class MovementManager {
         // Calculate target with humanization variations
         Vec3d adjustedTarget = applyMovementVariations(targetNode, nextNode, playerPos);
 
+        // Determine special movement needs
+        updateSpecialMovementState(playerPos, adjustedTarget, nextNode);
+
         // Apply movement keys and actions
         applyMovement(player, adjustedTarget, playerPos);
 
-        // Set next movement delay
+        // Set next movement delay (using config constants)
         scheduleNextMovementUpdate();
 
         // Update state
         lastTargetPos = targetNode;
         lastMovementTime = currentTime;
+
+        // Update jump cooldown
+        if (jumpCooldown > 0) jumpCooldown--;
     }
 
     /**
@@ -86,329 +100,233 @@ public class MovementManager {
     private Vec3d applyMovementVariations(Vec3d target, Vec3d nextNode, Vec3d playerPos) {
         Vec3d adjustedTarget = target;
 
-        // 1. Base random variation
+        // 1. Base random variation (using config constants)
         adjustedTarget = addRandomVariation(adjustedTarget);
 
-        // 2. Path prediction (look slightly ahead)
+        // 2. Path prediction and look-ahead
         adjustedTarget = addPathPrediction(adjustedTarget, nextNode);
 
-        // 3. Wiggle movement (side-to-side)
+        // 3. Wiggle movement for natural human-like path
         adjustedTarget = addWiggleMovement(adjustedTarget, playerPos);
 
-        // 4. Momentum-based adjustment
-        adjustedTarget = addMomentumAdjustment(adjustedTarget, playerPos);
+        // 4. Speed-based adjustments
+        adjustedTarget = adjustSpeedVariations(adjustedTarget, playerPos);
 
         return adjustedTarget;
     }
 
     /**
-     * Add basic random variation to movement
+     * Add random variation using config constants
      */
     private Vec3d addRandomVariation(Vec3d target) {
-        double intensity = config.MOVEMENT_VARIATION_BASE;
-        double xVar = (random.nextGaussian() - 0.5) * intensity;
-        double zVar = (random.nextGaussian() - 0.5) * intensity;
+        double intensity = PathfinderConfig.MOVEMENT_VARIATION_BASE;
 
-        return target.add(xVar, 0, zVar);
+        double randomX = (random.nextGaussian() * intensity);
+        double randomZ = (random.nextGaussian() * intensity);
+
+        return target.add(randomX, 0, randomZ);
     }
 
     /**
-     * Add path prediction (slight movement toward next waypoint)
+     * Add path prediction for smooth movement
      */
     private Vec3d addPathPrediction(Vec3d target, Vec3d nextNode) {
-        if (nextNode == null || nextNode.equals(target)) {
-            return target;
-        }
+        if (nextNode == null || nextNode.equals(target)) return target;
 
-        Vec3d pathDirection = nextNode.subtract(target).normalize();
-        double strength = config.MOVEMENT_PREDICTION_STRENGTH * random.nextDouble();
+        double strength = PathfinderConfig.MOVEMENT_PREDICTION_STRENGTH;
+        Vec3d prediction = nextNode.subtract(target).multiply(strength);
 
-        return target.add(pathDirection.multiply(strength));
+        return target.add(prediction);
     }
 
     /**
-     * Add wiggle movement for natural walking pattern
+     * Add wiggle movement for natural human-like pathing
      */
     private Vec3d addWiggleMovement(Vec3d target, Vec3d playerPos) {
-        double time = System.currentTimeMillis() * config.MOVEMENT_WIGGLE_FREQUENCY;
-        double wiggleIntensity = config.MOVEMENT_WIGGLE_INTENSITY;
+        long currentTime = System.currentTimeMillis();
+        double timeFactor = currentTime * PathfinderConfig.MOVEMENT_WIGGLE_FREQUENCY;
 
-        // Create periodic side-to-side movement
-        double wiggle = Math.sin(time) * wiggleIntensity;
+        double wiggleX = Math.sin(timeFactor) * PathfinderConfig.MOVEMENT_WIGGLE_INTENSITY;
+        double wiggleZ = Math.cos(timeFactor * 1.3) * PathfinderConfig.MOVEMENT_WIGGLE_INTENSITY;
 
-        // Calculate perpendicular direction for wiggle
-        Vec3d direction = target.subtract(playerPos);
-        if (direction.length() > 0.1) {
-            direction = direction.normalize();
-            Vec3d perpendicular = new Vec3d(-direction.z, 0, direction.x);
-            return target.add(perpendicular.multiply(wiggle));
-        }
-
-        return target;
+        return target.add(wiggleX, 0, wiggleZ);
     }
 
     /**
-     * Add momentum-based movement adjustment
+     * Adjust target based on speed variations
      */
-    private Vec3d addMomentumAdjustment(Vec3d target, Vec3d playerPos) {
-        Vec3d velocity = mc.player.getVelocity();
+    private Vec3d adjustSpeedVariations(Vec3d target, Vec3d playerPos) {
+        double distance = playerPos.distanceTo(target);
 
-        // If moving fast, slightly overshoot target
-        if (velocity.length() > 0.2) {
+        // Slow down for precision near target
+        if (distance < PathfinderConfig.SNEAK_DISTANCE_THRESHOLD) {
+            shouldSneak = true;
             Vec3d direction = target.subtract(playerPos).normalize();
-            double overshoot = velocity.length() * 0.3;
-            return target.add(direction.multiply(overshoot));
+            return playerPos.add(direction.multiply(0.3));
+        } else {
+            shouldSneak = false;
         }
 
         return target;
     }
 
     /**
-     * Apply actual movement keys and actions
+     * Update special movement state (sprint, sneak, jump)
+     */
+    private void updateSpecialMovementState(Vec3d playerPos, Vec3d target, Vec3d nextNode) {
+        double distanceToTarget = playerPos.distanceTo(target);
+
+        // Sprint management using config constants
+        if (distanceToTarget > PathfinderConfig.SPRINT_DISTANCE_THRESHOLD &&
+                !shouldSneak &&
+                random.nextDouble() < PathfinderConfig.SPRINT_CHANCE_PER_TICK) {
+            shouldSprint = true;
+        } else if (shouldSprint &&
+                random.nextDouble() < PathfinderConfig.SPRINT_STOP_CHANCE_PER_TICK) {
+            shouldSprint = false;
+        }
+
+        // Override sprint for precision movements
+        if (shouldSneak) {
+            shouldSprint = false;
+        }
+    }
+
+    /**
+     * Apply movement keys and special actions
      */
     private void applyMovement(ClientPlayerEntity player, Vec3d target, Vec3d playerPos) {
         // Reset all movement keys first
         resetMovementKeys();
 
+        // Calculate movement direction
         Vec3d direction = target.subtract(playerPos);
-        double distance = direction.length();
-
-        if (distance < 0.1) {
-            return; // Too close, no movement needed
-        }
+        if (direction.length() < 0.1) return; // Too close to move
 
         direction = direction.normalize();
 
-        // Calculate movement relative to player's facing direction
-        Vec3d facingDirection = Vec3d.fromPolar(0, player.getYaw());
-        double forward = direction.dotProduct(facingDirection);
-        double strafe = direction.dotProduct(new Vec3d(-facingDirection.z, 0, facingDirection.x));
+        // Get player's facing direction for relative movement
+        Vec3d facing = Vec3d.fromPolar(0, player.getYaw());
+        Vec3d right = new Vec3d(-facing.z, 0, facing.x);
 
-        // Apply movement with humanized thresholds
-        applyDirectionalMovement(forward, strafe);
+        // Calculate forward/backward and strafe components
+        double forward = direction.dotProduct(facing);
+        double strafe = direction.dotProduct(right);
 
-        // Handle special movements
-        handleSpecialMovements(player, target, distance);
-
-        // Handle sprinting with humanization
-        handleSprinting(player, forward, distance);
-
-        // Update movement rhythm
-        updateMovementRhythm();
-    }
-
-    /**
-     * Apply directional movement keys with humanized thresholds
-     */
-    private void applyDirectionalMovement(double forward, double strafe) {
-        // Apply humanized thresholds with slight randomization
-        double forwardThreshold = config.MOVEMENT_FORWARD_THRESHOLD +
-                (random.nextGaussian() - 0.5) * 0.05;
-        double strafeThreshold = config.MOVEMENT_STRAFE_THRESHOLD +
-                (random.nextGaussian() - 0.5) * 0.03;
-
-        // Forward/backward movement
-        if (forward > forwardThreshold) {
+        // Apply movement thresholds from config
+        if (forward > PathfinderConfig.MOVEMENT_FORWARD_THRESHOLD) {
             mc.options.forwardKey.setPressed(true);
-        } else if (forward < -forwardThreshold) {
+        } else if (forward < -PathfinderConfig.MOVEMENT_FORWARD_THRESHOLD) {
             mc.options.backKey.setPressed(true);
         }
 
-        // Left/right movement
-        if (strafe > strafeThreshold) {
+        if (strafe > PathfinderConfig.MOVEMENT_STRAFE_THRESHOLD) {
             mc.options.rightKey.setPressed(true);
-        } else if (strafe < -strafeThreshold) {
+        } else if (strafe < -PathfinderConfig.MOVEMENT_STRAFE_THRESHOLD) {
             mc.options.leftKey.setPressed(true);
         }
+
+        // Handle vertical movement
+        handleVerticalMovement(player, target, playerPos);
+
+        // Apply special movement states
+        mc.options.sprintKey.setPressed(shouldSprint);
+        mc.options.sneakKey.setPressed(shouldSneak);
     }
 
     /**
-     * Handle special movements like jumping, sneaking, climbing
+     * Handle jumping and vertical movement
      */
-    private void handleSpecialMovements(ClientPlayerEntity player, Vec3d target, double distance) {
-        BlockPos targetBlock = BlockPos.ofFloored(target);
-        BlockPos playerBlock = player.getBlockPos();
+    private void handleVerticalMovement(ClientPlayerEntity player, Vec3d target, Vec3d playerPos) {
+        double heightDiff = target.y - playerPos.y;
 
-        // Jumping logic with humanized timing
-        if (shouldJump(player, targetBlock, playerBlock)) {
-            if (random.nextDouble() < config.JUMP_CHANCE_PER_TICK) {
+        // Jump if target is higher and we need to jump
+        if (heightDiff > 0.5 && jumpCooldown == 0) {
+            if (random.nextDouble() < PathfinderConfig.JUMP_CHANCE_PER_TICK) {
                 mc.options.jumpKey.setPressed(true);
+                jumpCooldown = 10; // Prevent spam jumping
             }
         }
 
-        // Sneaking for precise movement
-        if (shouldSneak(distance)) {
-            mc.options.sneakKey.setPressed(true);
-        }
-    }
-
-    /**
-     * Determine if player should jump
-     */
-    private boolean shouldJump(ClientPlayerEntity player, BlockPos target, BlockPos playerPos) {
-        // Jump if target is higher
-        if (target.getY() > playerPos.getY()) {
-            return true;
-        }
-
-        // Jump over obstacles
-        Vec3d direction = Vec3d.ofCenter(target).subtract(player.getPos()).normalize();
-        BlockPos frontBlock = playerPos.offset(player.getHorizontalFacing());
-
-        if (!mc.world.getBlockState(frontBlock).isAir()) {
-            return true;
-        }
-
-        // Random jumping for humanization (very rare)
-        return random.nextDouble() < 0.001;
-    }
-
-    /**
-     * Determine if player should sneak
-     */
-    private boolean shouldSneak(double distance) {
-        return distance < config.SNEAK_DISTANCE_THRESHOLD;
-    }
-
-    /**
-     * Handle sprinting with humanization
-     */
-    private void handleSprinting(ClientPlayerEntity player, double forward, double distance) {
-        boolean shouldSprint = forward > 0.7 && distance > config.SPRINT_DISTANCE_THRESHOLD;
-
-        if (shouldSprint) {
-            // Humanized sprinting - not always instant
-            if (random.nextDouble() < config.SPRINT_CHANCE_PER_TICK) {
-                player.setSprinting(true);
-            }
-        } else {
-            // Occasionally stop sprinting for realism
-            if (player.isSprinting() && random.nextDouble() < config.SPRINT_STOP_CHANCE_PER_TICK) {
-                player.setSprinting(false);
+        // Handle obstacles that require jumping
+        if (isObstacleInFront(player, target) && jumpCooldown == 0) {
+            if (random.nextDouble() < PathfinderConfig.JUMP_CHANCE_PER_TICK * 2) {
+                mc.options.jumpKey.setPressed(true);
+                jumpCooldown = 15;
             }
         }
     }
 
     /**
-     * Update movement rhythm for natural walking patterns
+     * Check if there's an obstacle requiring jumping
      */
-    private void updateMovementRhythm() {
-        long currentTime = System.currentTimeMillis();
-        double timeSinceStart = (currentTime - movementStartTime) / 1000.0;
+    private boolean isObstacleInFront(ClientPlayerEntity player, Vec3d target) {
+        Vec3d direction = target.subtract(player.getPos()).normalize();
+        Vec3d checkPos = player.getPos().add(direction.multiply(1.5));
+        BlockPos blockPos = BlockPos.ofFloored(checkPos);
 
-        // Create natural movement rhythm (slight speed variations)
-        movementPhase = (timeSinceStart * 2.0) % (Math.PI * 2);
-        double rhythmFactor = 0.9 + 0.1 * Math.sin(movementPhase);
-
-        speedMultiplier = rhythmFactor;
-
-        // Update acceleration/deceleration state
-        if (wasMoving != isCurrentlyMoving()) {
-            isAccelerating = !wasMoving;
-            wasMoving = isCurrentlyMoving();
-        }
+        return mc.world != null &&
+                !mc.world.getBlockState(blockPos).isAir() &&
+                mc.world.getBlockState(blockPos).isSolidBlock(mc.world, blockPos);
     }
 
     /**
-     * Check if player is currently moving
-     */
-    private boolean isCurrentlyMoving() {
-        return mc.options.forwardKey.isPressed() ||
-                mc.options.backKey.isPressed() ||
-                mc.options.leftKey.isPressed() ||
-                mc.options.rightKey.isPressed();
-    }
-
-    /**
-     * Schedule next movement update with humanized delay
+     * Schedule next movement update using config constants
      */
     private void scheduleNextMovementUpdate() {
-        int baseDelay = config.MOVEMENT_BASE_DELAY_MS;
-        int variation = (int)(random.nextGaussian() * config.MOVEMENT_DELAY_VARIATION_MS);
-        int totalDelay = Math.max(config.MOVEMENT_MIN_DELAY_MS, baseDelay + variation);
+        int baseDelay = PathfinderConfig.MOVEMENT_BASE_DELAY_MS;
+        int variation = PathfinderConfig.MOVEMENT_DELAY_VARIATION_MS;
+        int minDelay = PathfinderConfig.MOVEMENT_MIN_DELAY_MS;
+        int maxDelay = PathfinderConfig.MOVEMENT_MAX_DELAY_MS;
 
-        // Adjust delay based on movement state
-        if (isAccelerating) {
-            totalDelay = (int)(totalDelay * 0.8); // Faster updates when starting
-        } else if (mc.player != null && mc.player.isSprinting()) {
-            totalDelay = (int)(totalDelay * 0.7); // Faster updates when sprinting
-        }
+        int delay = baseDelay + (int)(random.nextGaussian() * variation);
+        delay = Math.max(minDelay, Math.min(maxDelay, delay));
 
-        nextMovementDelay = System.currentTimeMillis() + totalDelay;
+        nextMovementDelay = System.currentTimeMillis() + delay;
     }
 
     /**
-     * Update stuck detection system
+     * Update stuck detection using config timeouts
      */
     private void updateStuckDetection(ClientPlayerEntity player) {
-        Vec3d currentPos = player.getPos();
-        double movementThreshold = config.STUCK_MOVEMENT_THRESHOLD;
+        Vec3d currentPlayerPos = player.getPos();
 
-        if (lastPlayerPos.squaredDistanceTo(currentPos) < movementThreshold * movementThreshold) {
+        if (currentPlayerPos.distanceTo(lastPlayerPos) < 0.1) {
             stuckTicks++;
         } else {
             stuckTicks = 0;
             isUnsticking = false;
         }
 
-        lastPlayerPos = currentPos;
+        lastPlayerPos = currentPlayerPos;
     }
 
     /**
-     * Check if player is stuck
-     */
-    public boolean isStuck() {
-        return stuckTicks > config.STUCK_DETECTION_TICKS;
-    }
-
-    /**
-     * Get number of ticks player has been stuck
-     */
-    public int getStuckTicks() {
-        return stuckTicks;
-    }
-
-    /**
-     * Try to unstick the player with random movements
+     * Try to unstick player with random movements
      */
     public void tryToUnstick(ClientPlayerEntity player) {
-        if (isUnsticking) return;
+        if (!isUnsticking) {
+            isUnsticking = true;
 
-        isUnsticking = true;
-        resetMovementKeys();
+            // Try random movement to unstick
+            resetMovementKeys();
 
-        // Try different unstick strategies
-        int strategy = random.nextInt(8);
-        switch (strategy) {
-            case 0 -> mc.options.forwardKey.setPressed(true);
-            case 1 -> mc.options.backKey.setPressed(true);
-            case 2 -> mc.options.leftKey.setPressed(true);
-            case 3 -> mc.options.rightKey.setPressed(true);
-            case 4 -> {
-                // Jump while moving
-                mc.options.jumpKey.setPressed(true);
-                mc.options.forwardKey.setPressed(true);
-            }
-            case 5 -> {
-                // Strafe jump
-                mc.options.jumpKey.setPressed(true);
-                mc.options.rightKey.setPressed(true);
-            }
-            case 6 -> {
-                // Back up and jump
-                mc.options.backKey.setPressed(true);
-                mc.options.jumpKey.setPressed(true);
-            }
-            case 7 -> {
-                // Sprint jump forward
-                mc.options.forwardKey.setPressed(true);
-                mc.options.jumpKey.setPressed(true);
-                if (player != null) player.setSprinting(true);
+            // Random directional movement
+            switch (random.nextInt(6)) {
+                case 0 -> mc.options.forwardKey.setPressed(true);
+                case 1 -> mc.options.backKey.setPressed(true);
+                case 2 -> mc.options.leftKey.setPressed(true);
+                case 3 -> mc.options.rightKey.setPressed(true);
+                case 4 -> {
+                    mc.options.jumpKey.setPressed(true);
+                    mc.options.forwardKey.setPressed(true);
+                }
+                case 5 -> {
+                    mc.options.sneakKey.setPressed(true);
+                    mc.options.forwardKey.setPressed(true);
+                }
             }
         }
-
-        // Add delay before next unstick attempt
-        nextMovementDelay = System.currentTimeMillis() + 150 + random.nextInt(200);
     }
 
     /**
@@ -417,67 +335,81 @@ public class MovementManager {
     public void resetStuckDetector() {
         stuckTicks = 0;
         isUnsticking = false;
-        if (mc.player != null) {
-            lastPlayerPos = mc.player.getPos();
-        }
     }
 
     /**
-     * Reset all movement keys to unpressed state
+     * Check if player is stuck using config threshold
+     */
+    public boolean isStuck() {
+        return stuckTicks > PathfinderConfig.RECALCULATE_STUCK_TICKS / 2; // Half threshold for early detection
+    }
+
+    /**
+     * Get stuck tick count
+     */
+    public int getStuckTicks() {
+        return stuckTicks;
+    }
+
+    /**
+     * Reset all movement keys to prevent conflicts
      */
     public static void resetMovementKeys() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.options != null) {
-            setKeyPressed(mc.options.forwardKey, false);
-            setKeyPressed(mc.options.backKey, false);
-            setKeyPressed(mc.options.leftKey, false);
-            setKeyPressed(mc.options.rightKey, false);
-            setKeyPressed(mc.options.jumpKey, false);
-            setKeyPressed(mc.options.sneakKey, false);
+            mc.options.forwardKey.setPressed(false);
+            mc.options.backKey.setPressed(false);
+            mc.options.leftKey.setPressed(false);
+            mc.options.rightKey.setPressed(false);
+            mc.options.jumpKey.setPressed(false);
+            mc.options.sneakKey.setPressed(false);
+            mc.options.sprintKey.setPressed(false);
         }
     }
 
     /**
-     * Set key binding pressed state
+     * Get current movement state for debugging
      */
-    private static void setKeyPressed(KeyBinding key, boolean pressed) {
-        if (key != null) {
-            key.setPressed(pressed);
-        }
-    }
-
-    /**
-     * Get current movement statistics for debugging
-     */
-    public MovementStats getStats() {
-        return new MovementStats(
-                stuckTicks,
-                isUnsticking,
-                speedMultiplier,
-                isCurrentlyMoving(),
-                System.currentTimeMillis() - lastMovementTime
+    public String getMovementState() {
+        return String.format(
+                "Movement State: stuck=%d, sprint=%s, sneak=%s, unsticking=%s, jumpCD=%d",
+                stuckTicks, shouldSprint, shouldSneak, isUnsticking, jumpCooldown
         );
     }
 
     /**
-     * Movement statistics for debugging and monitoring
+     * Check if currently performing special movement
      */
-    public record MovementStats(
-            int stuckTicks,
-            boolean isUnsticking,
-            double speedMultiplier,
-            boolean isMoving,
-            long timeSinceLastMovement
-    ) {
-        public boolean isHealthy() {
-            return stuckTicks < 30 && !isUnsticking && timeSinceLastMovement < 1000;
-        }
+    public boolean isPerformingSpecialMovement() {
+        return shouldSprint || shouldSneak || isUnsticking;
+    }
 
-        public String getStatusString() {
-            if (isUnsticking) return "§eUnsticking";
-            if (stuckTicks > 60) return "§cStuck (" + (stuckTicks / 20) + "s)";
-            if (isMoving) return "§aMoving";
-            return "§7Idle";
-        }
+    /**
+     * Get movement statistics
+     */
+    public String getStatistics() {
+        long uptime = System.currentTimeMillis() - movementStartTime;
+        return String.format(
+                "Movement Statistics:\n" +
+                        "  Uptime: %d seconds\n" +
+                        "  Stuck incidents: %d ticks\n" +
+                        "  Current state: %s\n" +
+                        "  Special movement: %s",
+                uptime / 1000, stuckTicks,
+                isStuck() ? "Stuck" : "Moving",
+                isPerformingSpecialMovement() ? "Active" : "Normal"
+        );
+    }
+
+    /**
+     * Emergency stop - reset everything
+     */
+    public void emergencyStop() {
+        resetMovementKeys();
+        resetStuckDetector();
+        shouldSprint = false;
+        shouldSneak = false;
+        isUnsticking = false;
+        jumpCooldown = 0;
     }
 }

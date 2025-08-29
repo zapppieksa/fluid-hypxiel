@@ -1,14 +1,14 @@
 package dev.sxmurxy.mre.modules.pathfinding.utils;
 
-import dev.sxmurxy.mre.modules.pathfinding.engine.AStarPathfinder.MovementType;
+import dev.sxmurxy.mre.modules.pathfinding.movement.MovementType;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 /**
- * Represents a single node in the pathfinding search
- * Contains position, costs, parent reference, and movement metadata
+ * Represents a single node in the pathfinding search with comprehensive metadata
+ * Contains position, costs, parent reference, movement data, and state information
  */
-public class PathNode {
+public class PathNode implements Comparable<PathNode> {
 
     // Core pathfinding data
     private final BlockPos pos;
@@ -24,10 +24,16 @@ public class PathNode {
     // Node state flags
     private boolean visited = false;
     private boolean dangerous = false;
+    private boolean cached = false;
+
+    // Performance tracking
+    private int calculationGeneration = 0;
+    private double originalGCost = Double.MAX_VALUE;
 
     public PathNode(BlockPos pos) {
         this.pos = pos;
         this.timestamp = System.currentTimeMillis();
+        this.originalGCost = Double.MAX_VALUE;
     }
 
     public PathNode(int x, int y, int z) {
@@ -46,6 +52,9 @@ public class PathNode {
 
     public void setGCost(double gCost) {
         this.gCost = gCost;
+        if (originalGCost == Double.MAX_VALUE) {
+            originalGCost = gCost;
+        }
     }
 
     public double getHCost() {
@@ -77,11 +86,14 @@ public class PathNode {
 
     public void setMovementType(MovementType movementType) {
         this.movementType = movementType;
-        this.isSpecialMove = (movementType != MovementType.WALK && movementType != MovementType.DIAGONAL);
     }
 
-    public long getTimestamp() {
-        return timestamp;
+    public boolean isSpecialMove() {
+        return isSpecialMove;
+    }
+
+    public void setSpecialMove(boolean specialMove) {
+        isSpecialMove = specialMove;
     }
 
     public boolean isVisited() {
@@ -100,33 +112,40 @@ public class PathNode {
         this.dangerous = dangerous;
     }
 
-    public boolean isSpecialMove() {
-        return isSpecialMove;
+    public boolean isCached() {
+        return cached;
+    }
+
+    public void setCached(boolean cached) {
+        this.cached = cached;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    public int getCalculationGeneration() {
+        return calculationGeneration;
+    }
+
+    public void setCalculationGeneration(int generation) {
+        this.calculationGeneration = generation;
     }
 
     // ==================== UTILITY METHODS ====================
 
     /**
-     * Get position as Vec3d centered on the block
+     * Get center position as Vec3d for precise calculations
      */
     public Vec3d getCenterVec3d() {
         return Vec3d.ofCenter(pos);
     }
 
     /**
-     * Get position as Vec3d at ground level (for player positioning)
+     * Get bottom center position as Vec3d (for player positioning)
      */
     public Vec3d getBottomCenterVec3d() {
         return new Vec3d(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
-    }
-
-    /**
-     * Get position with slight random offset for humanization
-     */
-    public Vec3d getHumanizedVec3d() {
-        double offsetX = (Math.random() - 0.5) * 0.3;
-        double offsetZ = (Math.random() - 0.5) * 0.3;
-        return new Vec3d(pos.getX() + 0.5 + offsetX, pos.getY(), pos.getZ() + 0.5 + offsetZ);
     }
 
     /**
@@ -137,85 +156,60 @@ public class PathNode {
     }
 
     /**
+     * Calculate squared distance to another node (faster)
+     */
+    public double squaredDistanceTo(PathNode other) {
+        return pos.getSquaredDistance(other.pos);
+    }
+
+    /**
+     * Calculate distance to a BlockPos
+     */
+    public double distanceTo(BlockPos otherPos) {
+        return Math.sqrt(pos.getSquaredDistance(otherPos));
+    }
+
+    /**
      * Calculate Manhattan distance to another node
      */
     public int manhattanDistanceTo(PathNode other) {
-        return Math.abs(pos.getX() - other.pos.getX()) +
-                Math.abs(pos.getY() - other.pos.getY()) +
-                Math.abs(pos.getZ() - other.pos.getZ());
-    }
-
-    /**
-     * Check if this node requires special movement handling
-     */
-    public boolean requiresSpecialMovement() {
-        return isSpecialMove;
-    }
-
-    /**
-     * Get movement priority (lower = higher priority)
-     * Used for sorting nodes when multiple paths have same cost
-     */
-    public int getMovementPriority() {
-        return switch (movementType) {
-            case WALK -> 1;
-            case DIAGONAL -> 2;
-            case FALL -> 3;
-            case JUMP -> 4;
-            case CLIMB -> 5;
-            case PARKOUR -> 6;
-        };
-    }
-
-    /**
-     * Get relative cost multiplier based on movement type
-     */
-    public double getMovementCostMultiplier() {
-        return switch (movementType) {
-            case WALK -> 1.0;
-            case DIAGONAL -> 1.414;
-            case JUMP -> 1.3;
-            case CLIMB -> 1.8;
-            case FALL -> 0.9;
-            case PARKOUR -> 2.5;
-        };
+        return pos.getManhattanDistance(other.pos);
     }
 
     /**
      * Check if this node is adjacent to another node
      */
     public boolean isAdjacentTo(PathNode other) {
+        return pos.getManhattanDistance(other.pos) == 1;
+    }
+
+    /**
+     * Check if this node is diagonally adjacent to another node
+     */
+    public boolean isDiagonalTo(PathNode other) {
         int dx = Math.abs(pos.getX() - other.pos.getX());
         int dy = Math.abs(pos.getY() - other.pos.getY());
         int dz = Math.abs(pos.getZ() - other.pos.getZ());
-
-        return dx <= 1 && dy <= 1 && dz <= 1 && (dx + dy + dz > 0);
+        return (dx + dy + dz) <= 2 && dx <= 1 && dy <= 1 && dz <= 1;
     }
 
     /**
-     * Check if this node is directly connected to another (no obstacles)
+     * Check if node has been improved since original calculation
      */
-    public boolean isDirectlyConnectedTo(PathNode other) {
-        // Simple check - could be enhanced with world collision detection
-        return manhattanDistanceTo(other) <= 2;
+    public boolean hasBeenImproved() {
+        return gCost < originalGCost - 0.001; // Small epsilon for floating point comparison
     }
 
     /**
-     * Get the age of this node in milliseconds
+     * Get improvement ratio (how much better this path is)
      */
-    public long getAge() {
-        return System.currentTimeMillis() - timestamp;
+    public double getImprovementRatio() {
+        if (originalGCost == Double.MAX_VALUE) return 0.0;
+        return (originalGCost - gCost) / originalGCost;
     }
 
     /**
-     * Check if this node is considered "fresh" (recently created)
-     */
-    public boolean isFresh(long maxAge) {
-        return getAge() < maxAge;
-    }
-
-    /**
-     * Create a copy of this node with updated costs
+     * Create a deep copy of this node
      */
     public PathNode copy() {
         PathNode copy = new PathNode(pos);
@@ -226,6 +220,9 @@ public class PathNode {
         copy.isSpecialMove = this.isSpecialMove;
         copy.visited = this.visited;
         copy.dangerous = this.dangerous;
+        copy.cached = this.cached;
+        copy.calculationGeneration = this.calculationGeneration;
+        copy.originalGCost = this.originalGCost;
         return copy;
     }
 
@@ -241,7 +238,6 @@ public class PathNode {
      * Check if this is a valid landing position for falling
      */
     public boolean isValidLandingPosition() {
-        // Basic check - node should not be dangerous and should be on solid ground
         return !dangerous && movementType != MovementType.PARKOUR;
     }
 
@@ -267,6 +263,13 @@ public class PathNode {
     }
 
     /**
+     * Check if this node requires precise timing
+     */
+    public boolean requiresPreciseTiming() {
+        return movementType.requiresPrecision();
+    }
+
+    /**
      * Get movement vector from parent to this node
      */
     public Vec3d getMovementVector() {
@@ -288,29 +291,43 @@ public class PathNode {
      * Get estimated time to execute this movement (in ticks)
      */
     public int getEstimatedExecutionTime() {
-        return switch (movementType) {
-            case WALK -> 2;
-            case DIAGONAL -> 3;
-            case JUMP -> 4;
-            case CLIMB -> 6;
-            case FALL -> 1;
-            case PARKOUR -> 8;
-        };
+        return movementType.getExecutionTicks();
     }
 
     /**
      * Check if this movement requires sprinting
      */
     public boolean requiresSprinting() {
-        return movementType == MovementType.PARKOUR ||
-                (movementType == MovementType.JUMP && distanceTo(parent) > 2.5);
+        return movementType.prefersSprinting() ||
+                (parent != null && distanceTo(parent) > 2.5);
     }
 
     /**
-     * Check if this movement requires precise timing
+     * Get movement priority for pathfinding tie-breaking
      */
-    public boolean requiresPreciseTiming() {
-        return movementType == MovementType.PARKOUR || movementType == MovementType.JUMP;
+    private int getMovementPriority() {
+        return movementType.getPriority();
+    }
+
+    /**
+     * Check if this node is stale (too old to be reliable)
+     */
+    public boolean isStale(long currentTime, long maxAge) {
+        return (currentTime - timestamp) > maxAge;
+    }
+
+    /**
+     * Refresh timestamp
+     */
+    public void refreshTimestamp() {
+        this.timestamp = System.currentTimeMillis();
+    }
+
+    /**
+     * Get age of this node in milliseconds
+     */
+    public long getAge() {
+        return System.currentTimeMillis() - timestamp;
     }
 
     // ==================== OBJECT OVERRIDES ====================
@@ -337,19 +354,60 @@ public class PathNode {
     /**
      * Compare nodes for priority queue (lower F-cost = higher priority)
      */
+    @Override
     public int compareTo(PathNode other) {
+        // Primary: F-cost comparison
         int fCompare = Double.compare(this.getFCost(), other.getFCost());
         if (fCompare != 0) {
             return fCompare;
         }
 
-        // If F-costs are equal, prefer nodes with lower H-cost (closer to goal)
+        // Secondary: H-cost comparison (prefer nodes closer to goal)
         int hCompare = Double.compare(this.hCost, other.hCost);
         if (hCompare != 0) {
             return hCompare;
         }
 
-        // If still equal, prefer simpler movement types
-        return Integer.compare(this.getMovementPriority(), other.getMovementPriority());
+        // Tertiary: Movement priority (prefer simpler movements)
+        int priorityCompare = Integer.compare(this.getMovementPriority(), other.getMovementPriority());
+        if (priorityCompare != 0) {
+            return priorityCompare;
+        }
+
+        // Quaternary: Timestamp (prefer newer nodes)
+        return Long.compare(other.timestamp, this.timestamp);
+    }
+
+    /**
+     * Validate this node's state for debugging
+     */
+    public boolean isValid() {
+        return pos != null &&
+                gCost >= 0 &&
+                hCost >= 0 &&
+                movementType != null &&
+                timestamp > 0;
+    }
+
+    /**
+     * Get comprehensive node statistics
+     */
+    public String getStats() {
+        return String.format(
+                "PathNode Stats:\n" +
+                        "  Position: %s\n" +
+                        "  G-Cost: %.2f (Original: %.2f)\n" +
+                        "  H-Cost: %.2f\n" +
+                        "  F-Cost: %.2f\n" +
+                        "  Movement: %s\n" +
+                        "  Special: %s\n" +
+                        "  Dangerous: %s\n" +
+                        "  Age: %dms\n" +
+                        "  Generation: %d\n" +
+                        "  Improved: %s",
+                pos.toShortString(), gCost, originalGCost, hCost, getFCost(),
+                movementType, isSpecialMove, dangerous, getAge(),
+                calculationGeneration, hasBeenImproved()
+        );
     }
 }
