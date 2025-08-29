@@ -1,6 +1,7 @@
 package dev.sxmurxy.mre;
 
 import com.google.gson.Gson;
+import dev.sxmurxy.mre.client.pathfinding.PathfinderAPI;
 import dev.sxmurxy.mre.modules.ModuleManager;
 import dev.sxmurxy.mre.modules.command.*;
 import dev.sxmurxy.mre.modules.settings.SettingManager;
@@ -72,7 +73,6 @@ public class UnnsenseClient implements ClientModInitializer {
     public void onInitializeClient() {
         ClientTickEvents.START_CLIENT_TICK.register(this::onClientTick);
 
-
         registerKeybindings();
 
 
@@ -82,7 +82,11 @@ public class UnnsenseClient implements ClientModInitializer {
                 client.setScreen(new ClickGUI());
             }
         });
-
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                    // This ensures the PathExecutor is constantly updated, allowing it to
+                    // execute the path with humanized movement and rotations.
+                    PathfinderAPI.tick();
+                });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (drag.wasPressed()) {
 

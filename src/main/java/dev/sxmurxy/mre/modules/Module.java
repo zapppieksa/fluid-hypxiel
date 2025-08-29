@@ -3,6 +3,7 @@ package dev.sxmurxy.mre.modules;
 import lombok.Getter;
 import lombok.Setter;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.Text;
 
 @Getter
 public class Module {
@@ -15,11 +16,14 @@ public class Module {
 
     public String name;
     public String desc;
-
+    protected String description;
+    protected int keyCode;
     public Module(String name, String desc, ModuleCategory category) {
         this.name = name;
-        this.desc = desc;
+        this.description = description;
         this.category = category;
+        this.keyCode = keyCode;
+        this.toggled = false;
     }
 
     private int key = -1;
@@ -45,16 +49,39 @@ public class Module {
 
 
     }
-
+    protected void sendMessage(String message) {
+        if (mc.player != null) {
+            mc.player.sendMessage(Text.literal(message), false);
+        }
+    }
     public void onDisable() {
 
 
     }
+    public int getKeyCode() {
+        return keyCode;
+    }
 
+    public boolean isToggled() {
+        return toggled;
+    }
+
+    // Setters
+    public void setKeyCode(int keyCode) {
+        this.keyCode = keyCode;
+    }
+    public void onTick() {
+        // Override in subclasses
+    }
     public void onUpdate() {}
 
     public void toggle() {
-        setToggled(!isToggled());
+        toggled = !toggled;
 
+        if (toggled) {
+            onEnable();
+        } else {
+            onDisable();
+        }
     }
 }
