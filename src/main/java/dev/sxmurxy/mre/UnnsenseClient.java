@@ -1,9 +1,12 @@
 package dev.sxmurxy.mre;
 
 import com.google.gson.Gson;
+import dev.sxmurxy.mre.client.pathfinding.Pathfinder;
 import dev.sxmurxy.mre.client.pathfinding.PathfinderAPI;
 import dev.sxmurxy.mre.modules.ModuleManager;
 import dev.sxmurxy.mre.modules.command.*;
+import dev.sxmurxy.mre.modules.pathfinder.PathfindingModule;
+import dev.sxmurxy.mre.client.pathfinding.PathRender;
 import dev.sxmurxy.mre.modules.settings.SettingManager;
 import dev.sxmurxy.mre.ui.ClickGUI;
 import net.fabricmc.api.ClientModInitializer;
@@ -85,7 +88,7 @@ public class UnnsenseClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
                     // This ensures the PathExecutor is constantly updated, allowing it to
                     // execute the path with humanized movement and rotations.
-                    PathfinderAPI.tick();
+            initializePathfindingSystem();
                 });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (drag.wasPressed()) {
@@ -126,6 +129,21 @@ public class UnnsenseClient implements ClientModInitializer {
         CommandManager.register(new PathfindCommand());
 
         ModuleManager.register();
+    }
+
+    private void initializePathfindingSystem() {
+        // Initialize PathfinderAPI (this handles its own setup)
+        PathfinderAPI.getInstance();
+
+        // Initialize modules
+        PathfindingModule.getInstance();
+        new PathRender(); // Path renderer
+
+        // Configure default settings
+        PathfinderAPI.setDebugMode(false);
+        PathfinderAPI.setAotvEnabled(true);
+        PathfinderAPI.setEtherwarpEnabled(true);
+        PathfinderAPI.setRenderPathEnabled(true);
     }
 
     public void onClientTick(MinecraftClient minecraftClient) {

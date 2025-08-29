@@ -1,111 +1,301 @@
 package dev.sxmurxy.mre.client.rotations;
 
-import dev.sxmurxy.mre.client.pathfinding.Pathfinder;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
-import java.util.List;
 import java.util.Random;
 
 /**
- * An advanced rotation controller implementing the "Gaze and Glance" algorithm
- * with a fine-tuned PID controller for exceptionally smooth and purposeful camera movement.
+ * Advanced humanized rotation system with context-aware speed algorithms.
+ * Implements mathematical models for natural human-like camera movement.
+ *
+ * Key Algorithm: Bigger rotations = faster, smaller rotations = smooth and precise
  */
 public class RotationController {
+    private static final MinecraftClient mc = MinecraftClient.getInstance();
+    private static final Random random = new Random();
 
-    private final PlayerEntity player;
-    private final Random random = new Random();
+    // Rotation speed constants (degrees per tick) - tuned for different contexts
+    private static final float GENERAL_ROTATION_SPEED_MIN = 2.0f;
+    private static final float GENERAL_ROTATION_SPEED_MAX = 15.0f;
+    private static final float MOVEMENT_ROTATION_SPEED_MIN = 4.0f;
+    private static final float MOVEMENT_ROTATION_SPEED_MAX = 20.0f;
+    private static final float ETHERWARP_ROTATION_SPEED_MIN = 1.0f;
+    private static final float ETHERWARP_ROTATION_SPEED_MAX = 8.0f;
 
-    // Fine-tuned PID constants for a "softer," more human feel
-    private final double Kp = 0.035; // Proportional
-    private final double Ki = 0.004; // Integral
-    private final double Kd = 0.015; // Derivative
+    // Humanization parameters
+    private static final float SMOOTHING_FACTOR = 0.85f;
+    private static final float OVERSHOOT_FACTOR = 0.15f;
+    private static final float MICRO_CORRECTION_THRESHOLD = 2.0f;
 
-    private double yawErrorSum = 0;
-    private double pitchErrorSum = 0;
-    private double lastYawError = 0;
-    private double lastPitchError = 0;
+    // Current rotation state
+    private static float currentYawVelocity = 0.0f;
+    private static float currentPitchVelocity = 0.0f;
+    private static long lastRotationTime = 0;
+    private static RotationType lastRotationType = RotationType.GENERAL;
 
-    private long lastGlanceTime = 0;
-    private boolean isGlancing = false;
-
-    public RotationController(PlayerEntity player) {
-        this.player = player;
+    public enum RotationType {
+        GENERAL,      // Smooth, natural rotations
+        MOVEMENT,     // Faster rotations for pathfinding
+        ETHERWARP,    // Precise, slower rotations for etherwarp
+        AOTV         // Quick rotations for AOTV
     }
 
-    public void tick(List<Vec3d> path, int pathIndex, List<Pathfinder.MoveType> moveTypes) {
-        if (path == null || path.isEmpty() || pathIndex >= path.size()) return;
+    /**
+     * Main rotation method that handles all rotation types with humanized algorithms.
+     */
+    public static void rotate(Vec3d target, RotationType type, boolean instant) {
+        if (mc.player == null) return;
 
-        // --- Saccadic Gaze Logic ---
-        // Gaze target is now velocity-dependent: look further when moving faster.
-        int lookAhead = (int) (10 + player.getVelocity().length() * 5);
-        Vec3d gazeTarget = path.get(Math.min(pathIndex + lookAhead, path.size() - 1));
-        Vec3d aimTarget = gazeTarget;
+        float[] targetRotation = calculateTargetRotation(target);
+        float targetYaw = targetRotation[0];
+        float targetPitch = targetRotation[1];
 
-        // --- Purposeful Glance Logic ---
-        // Trigger a glance only if a JUMP or FALL is imminent.
-        boolean complexMoveAhead = false;
-        for (int i = pathIndex; i < Math.min(pathIndex + 5, moveTypes.size()); i++) {
-            if (moveTypes.get(i) == Pathfinder.MoveType.JUMP || moveTypes.get(i) == Pathfinder.MoveType.FALL) {
-                complexMoveAhead = true;
-                break;
+        if (instant) {
+            setRotation(targetYaw, targetPitch);
+            return;
+        }
+
+        RotationStep step = calculateHumanizedRotation(targetYaw, targetPitch, type);
+        applyRotationStep(step);
+    }
+
+    /**
+     * Advanced algorithm for calculating humanized rotation with context-aware speeds.
+     * Uses sigmoid function for speed curve: larger angles = faster, smaller angles = smoother.
+     *
+     * Mathematical model: speed = base + (max-base) * sigmoid(angle/threshold) * randomFactor
+     */
+    private static RotationStep calculateHumanizedRotation(float targetYaw, float targetPitch, RotationType type) {
+        float currentYaw = mc.player.getYaw();
+        float currentPitch = mc.player.getPitch();
+
+        float yawDiff = MathHelper.wrapDegrees(targetYaw - currentYaw);
+        float pitchDiff = MathHelper.wrapDegrees(targetPitch - currentPitch);
+
+        // Calculate total angular distance
+        float totalAngle = (float) Math.sqrt(yawDiff * yawDiff + pitchDiff * pitchDiff);
+
+        // Dynamic speed calculation using sigmoid function
+        float baseSpeed = calculateDynamicSpeed(totalAngle, type);
+
+        // Apply humanization factors
+        HumanizationFactors factors = calculateHumanizationFactors(totalAngle, type);
+
+        // Calculate final rotation deltas with exponential approach for smoothness
+        float yawDelta = calculateAxisDelta(yawDiff, baseSpeed, factors.yawMultiplier);
+        float pitchDelta = calculateAxisDelta(pitchDiff, baseSpeed, factors.pitchMultiplier);
+
+        return new RotationStep(yawDelta, pitchDelta, factors);
+    }
+
+    /**
+     * Dynamic speed calculation using sigmoid curve.
+     * Large angles get exponentially faster speed, small angles get smooth precision.
+     */
+    private static float calculateDynamicSpeed(float angle, RotationType type) {
+        float minSpeed, maxSpeed, threshold;
+
+        switch (type) {
+            case MOVEMENT -> {
+                minSpeed = MOVEMENT_ROTATION_SPEED_MIN;
+                maxSpeed = MOVEMENT_ROTATION_SPEED_MAX;
+                threshold = 45.0f; // Faster ramp-up for movement
+            }
+            case ETHERWARP -> {
+                minSpeed = ETHERWARP_ROTATION_SPEED_MIN;
+                maxSpeed = ETHERWARP_ROTATION_SPEED_MAX;
+                threshold = 30.0f; // More precise control
+            }
+            case AOTV -> {
+                minSpeed = GENERAL_ROTATION_SPEED_MIN;
+                maxSpeed = GENERAL_ROTATION_SPEED_MAX;
+                threshold = 60.0f; // Quick but controlled
+            }
+            default -> {
+                minSpeed = GENERAL_ROTATION_SPEED_MIN;
+                maxSpeed = GENERAL_ROTATION_SPEED_MAX;
+                threshold = 90.0f; // Balanced curve
             }
         }
 
-        if (complexMoveAhead && System.currentTimeMillis() - lastGlanceTime > 1500) {
-            isGlancing = true;
-            lastGlanceTime = System.currentTimeMillis();
+        // Sigmoid function: 1 / (1 + e^(-x + offset))
+        // This creates smooth acceleration for larger angles
+        float sigmoidInput = (angle - threshold/2) / (threshold/4);
+        float sigmoidOutput = (float) (1.0 / (1.0 + Math.exp(-sigmoidInput)));
+
+        // Add human variation (±20%)
+        float randomFactor = 0.8f + (random.nextFloat() * 0.4f);
+
+        return minSpeed + (maxSpeed - minSpeed) * sigmoidOutput * randomFactor;
+    }
+
+    /**
+     * Calculate axis-specific rotation delta with exponential decay for smooth approach.
+     */
+    private static float calculateAxisDelta(float angleDiff, float baseSpeed, float multiplier) {
+        if (Math.abs(angleDiff) < 0.1f) return 0.0f;
+
+        float absAngle = Math.abs(angleDiff);
+        float direction = Math.signum(angleDiff);
+
+        // Exponential decay for smoother approach to target
+        float decayFactor = (float) Math.exp(-absAngle / 180.0f);
+        float smoothingMultiplier = 1.0f - (decayFactor * SMOOTHING_FACTOR);
+
+        float delta = baseSpeed * multiplier * smoothingMultiplier;
+
+        // Micro-corrections for small angles (human precision simulation)
+        if (absAngle < MICRO_CORRECTION_THRESHOLD) {
+            delta *= 0.2f + (random.nextFloat() * 0.3f); // 20-50% of normal speed
         }
 
-        if (isGlancing && System.currentTimeMillis() - lastGlanceTime < 250) { // Glance for 250ms
-            aimTarget = path.get(pathIndex); // Look at immediate node to "check footing"
-        } else {
-            isGlancing = false;
+        // Prevent overshoot but allow slight human error
+        if (delta > absAngle) {
+            float overshoot = 1.0f + (random.nextFloat() * OVERSHOOT_FACTOR - OVERSHOOT_FACTOR/2);
+            delta = absAngle * overshoot;
         }
 
-        applyPIDRotations(aimTarget);
+        return direction * Math.max(0.05f, delta);
     }
 
-    public void tickPrecise(Vec3d target) {
-        applyPIDRotations(target);
+    /**
+     * Calculate humanization factors based on rotation context and momentum.
+     */
+    private static HumanizationFactors calculateHumanizationFactors(float angle, RotationType type) {
+        long currentTime = System.currentTimeMillis();
+        float timeDelta = (currentTime - lastRotationTime) / 50.0f; // Convert to ticks
+
+        // Base multipliers (humans are naturally slower at pitch)
+        float yawMultiplier = 1.0f;
+        float pitchMultiplier = 0.75f; // Vertical adjustment is typically slower
+
+        // Context-specific adjustments
+        switch (type) {
+            case ETHERWARP -> {
+                yawMultiplier *= 0.6f;  // Very precise for etherwarp
+                pitchMultiplier *= 0.5f;
+            }
+            case MOVEMENT -> {
+                yawMultiplier *= 1.3f;  // Faster for movement
+                pitchMultiplier *= 1.2f;
+            }
+            case AOTV -> {
+                yawMultiplier *= 1.15f; // Slightly faster for AOTV
+                pitchMultiplier *= 1.0f;
+            }
+        }
+
+        // Momentum-based adjustment (continuation of previous rotation type)
+        if (lastRotationType == type && timeDelta < 3.0f) {
+            float momentum = Math.min(1.5f, 2.0f - timeDelta / 2.0f);
+            yawMultiplier *= momentum;
+            pitchMultiplier *= momentum;
+        }
+
+        // Human inconsistency (±20% variation)
+        yawMultiplier *= 0.8f + (random.nextFloat() * 0.4f);
+        pitchMultiplier *= 0.8f + (random.nextFloat() * 0.4f);
+
+        lastRotationTime = currentTime;
+        lastRotationType = type;
+
+        return new HumanizationFactors(yawMultiplier, pitchMultiplier, angle > 30.0f);
     }
 
-    private void applyPIDRotations(Vec3d target) {
-        // --- Calculate Target Angles ---
-        double deltaX = target.x - player.getX();
-        double deltaY = target.y - player.getEyeY();
-        double deltaZ = target.z - player.getZ();
-        double horizontalDistance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+    /**
+     * Apply rotation step with velocity smoothing and natural deceleration.
+     */
+    private static void applyRotationStep(RotationStep step) {
+        // Exponential moving average for velocity smoothing
+        float smoothingFactor = step.factors.isLargeRotation ? 0.6f : 0.8f;
 
-        float targetYaw = (float) (MathHelper.atan2(deltaZ, deltaX) * (180.0 / Math.PI)) - 90.0F;
-        float targetPitch = (float) (-(MathHelper.atan2(deltaY, horizontalDistance) * (180.0 / Math.PI)));
+        currentYawVelocity = currentYawVelocity * smoothingFactor + step.yawDelta * (1 - smoothingFactor);
+        currentPitchVelocity = currentPitchVelocity * smoothingFactor + step.pitchDelta * (1 - smoothingFactor);
 
-        // --- PID Calculation ---
-        double yawError = MathHelper.wrapDegrees(targetYaw - player.getYaw());
-        yawErrorSum += yawError;
-        yawErrorSum = MathHelper.clamp(yawErrorSum, -100, 100); // Prevent integral windup
-        double yawDerivative = yawError - lastYawError;
-        float yawOutput = (float) (Kp * yawError + Ki * yawErrorSum + Kd * yawDerivative);
-        lastYawError = yawError;
+        // Natural deceleration for large rotations
+        if (step.factors.isLargeRotation) {
+            currentYawVelocity *= 0.92f;
+            currentPitchVelocity *= 0.92f;
+        }
 
-        double pitchError = targetPitch - player.getPitch();
-        pitchErrorSum += pitchError;
-        pitchErrorSum = MathHelper.clamp(pitchErrorSum, -100, 100);
-        double pitchDerivative = pitchError - lastPitchError;
-        float pitchOutput = (float) (Kp * pitchError + Ki * pitchErrorSum + Kd * pitchDerivative);
-        lastPitchError = pitchError;
+        // Apply final rotation
+        float newYaw = mc.player.getYaw() + currentYawVelocity;
+        float newPitch = MathHelper.clamp(mc.player.getPitch() + currentPitchVelocity, -90.0f, 90.0f);
 
-        // --- Apply New Rotations ---
-        player.setYaw(player.getYaw() + yawOutput);
-        player.setPitch(MathHelper.clamp(player.getPitch() + pitchOutput, -90.0F, 90.0F));
+        setRotation(newYaw, newPitch);
     }
 
-    public void stop() {
-        // Reset PID state
-        this.yawErrorSum = 0;
-        this.pitchErrorSum = 0;
-        this.lastYawError = 0;
-        this.lastPitchError = 0;
+    /**
+     * Calculate target rotation angles to look at a specific position.
+     */
+    private static float[] calculateTargetRotation(Vec3d target) {
+        if (mc.player == null) return new float[]{0, 0};
+
+        Vec3d eyePos = mc.player.getEyePos();
+        Vec3d direction = target.subtract(eyePos);
+
+        double horizontalDistance = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+
+        float yaw = (float) (Math.atan2(direction.z, direction.x) * 180.0 / Math.PI) - 90.0f;
+        float pitch = (float) (-Math.atan2(direction.y, horizontalDistance) * 180.0 / Math.PI);
+
+        return new float[]{yaw, pitch};
     }
+
+    /**
+     * Set player rotation with proper normalization.
+     */
+    private static void setRotation(float yaw, float pitch) {
+        if (mc.player == null) return;
+
+        mc.player.setYaw(MathHelper.wrapDegrees(yaw));
+        mc.player.setPitch(MathHelper.clamp(pitch, -90.0f, 90.0f));
+    }
+
+    /**
+     * Check if rotation is close enough to target (within threshold).
+     */
+    public static boolean isRotationComplete(Vec3d target, float threshold) {
+        if (mc.player == null) return false;
+
+        float[] targetRotation = calculateTargetRotation(target);
+        float yawDiff = Math.abs(MathHelper.wrapDegrees(targetRotation[0] - mc.player.getYaw()));
+        float pitchDiff = Math.abs(MathHelper.wrapDegrees(targetRotation[1] - mc.player.getPitch()));
+
+        return yawDiff < threshold && pitchDiff < threshold;
+    }
+
+    /**
+     * Calculate rotation distance to target in degrees.
+     */
+    public static float getRotationDistance(Vec3d target) {
+        if (mc.player == null) return 0;
+
+        float[] targetRotation = calculateTargetRotation(target);
+        float yawDiff = Math.abs(MathHelper.wrapDegrees(targetRotation[0] - mc.player.getYaw()));
+        float pitchDiff = Math.abs(MathHelper.wrapDegrees(targetRotation[1] - mc.player.getPitch()));
+
+        return (float) Math.sqrt(yawDiff * yawDiff + pitchDiff * pitchDiff);
+    }
+
+    /**
+     * Reset rotation velocities for clean state.
+     */
+    public static void resetVelocities() {
+        currentYawVelocity = 0.0f;
+        currentPitchVelocity = 0.0f;
+    }
+
+    /**
+     * Get current rotation velocity for debugging.
+     */
+    public static Vec3d getCurrentVelocity() {
+        return new Vec3d(currentYawVelocity, currentPitchVelocity, 0);
+    }
+
+    // Helper classes
+    private record RotationStep(float yawDelta, float pitchDelta, HumanizationFactors factors) {}
+
+    private record HumanizationFactors(float yawMultiplier, float pitchMultiplier, boolean isLargeRotation) {}
 }
-

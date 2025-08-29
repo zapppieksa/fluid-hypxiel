@@ -56,7 +56,6 @@ public class ModuleManager {
         registerModule(new SShapeWheat());
         registerModule(new PathfindingModule());
         registerModule(new Testxray());
-        registerModule(new Test());
     }
 
 }
